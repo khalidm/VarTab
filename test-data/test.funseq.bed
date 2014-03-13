@@ -1,0 +1,4 @@
+chr	start	end	ref	alt	cds;variant.annotation.cds;network.hub;gene.under.negative.selection;ENCODE.annotated;motif.breaking;sensitive;ultra.sensitive;target.gene;coding.score;noncoding.score
+1	179966175	179966176	A	G	Yes;VA=1:CEP350:ENSG00000135837.11:+:nonsynonymous:1/1:CEP350-001:ENST00000367607.3:9354_884_295_H->R;REG;Yes;.;.;.;.;CEP350;3;.
+1	3731958	3731959	C	T	No;.;.;.;.;.;.;.;.;.;0
+1	3731964	3731965	G	A	No;.;.;.;.;.;.;.;.;.;0
