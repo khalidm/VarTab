@@ -10,6 +10,9 @@ use Bio::Perl;
 use Bio::DB::Fasta;
 use JSON;
 use Data::Dumper;
+use Carp;
+use Tabix;
+#package Reader;
 
 use strict;
 #use warnings;
@@ -43,6 +46,7 @@ sub error
         "   -f, --frequency                  Sample frequency threshold\n",
         "   -s, --sequence                   Print flanking sequence\n",
         "   -b, --bedfile                    Annotation file (bed file)\n",
+        "   -a, --annotate                   Annotation file (bgzip bed + tabix indexed file)\n",
         "   -n, --nondbsnp                   Keep only non-dbsnp variants (assumes the ID tag is populated in the vcf)\n",
         "\n";
 }
@@ -64,6 +68,7 @@ sub parse_params
         if ( $arg eq '-f' || $arg eq '--frequency' ) { $$opts{frequency}=shift(@ARGV); next; }
         if ( $arg eq '-s' || $arg eq '--sequence' ) { $$opts{sequence}=shift(@ARGV); next; }
         if ( $arg eq '-b' || $arg eq '--bedfile' ) { $$opts{bedfile}=shift(@ARGV); next; }
+        if ( $arg eq '-a' || $arg eq '--annotate' ) { $$opts{annotate}=shift(@ARGV); next; }
         if ( $arg eq '-n' || $arg eq '--nondbsnp' ) { $$opts{nondbsnp}=1; next; }
         error("Unknown parameter \"$arg\". Run -h for help.\n");
     }
@@ -145,7 +150,7 @@ sub convert_to_tab
     my $getseq = "F";
 
     my $freq_threshold;
-    #my $annotation_bed = "FALSE";
+    my $annotation_bed = "False";
     
     if ( exists($$opts{frequency}) )
     {
@@ -157,22 +162,24 @@ sub convert_to_tab
         $freq_threshold = 5.0;
     }
 
+    # if annotation bed file provided
+    if ( exists($$opts{annotate}) )
+    {
+        $annotation_bed = $$opts{annotate};
+        bed_annotate($annotation_bed);
+    }
+    else 
+    {
+        # set to default
+        $annotation_bed = "False";
+    }
+
+    # check print flanking sequence : requires genome fasta file
     if (exists($$opts{sequence}))
     {
-        #my $reg = 'Bio::EnsEMBL::Registry';
-        #$reg->load_registry_from_db(
-        #    -host => 'ensembldb.ensembl.org',
-        #    -user => 'anonymous'
-        #);
-        #my $slice_adaptor = $reg->get_adaptor( 'human', 'core', 'slice');
         $getseq = "T";
     }
-    
-    #if ($$opts{frequency} ) { $freq_threshold=$$opts{frequency};};
-    #if ( exists($$opts{bedfile}) ) 
-    #{
-    #    $annotation_bed = $$opts{bedfile};
-    #}
+   
 
     my $iupac;
     if ( $$opts{iupac} ) { $iupac=$$opts{iupac}; }
@@ -702,3 +709,24 @@ sub get_gt_type
     }
 }
 
+sub bed_annotate
+{
+    my $annotation = shift;
+    my $chr = shift;
+    my $start = shift;
+    my $end = shift;
+    # Initialize the annotation reader
+    #my $reader;
+    #my $prev_chr;
+    #my $prev_pos;
+    #my $vcf;
+    my $var = ".";
+    my $tabix;
+    # if ( exists($$opts{annotations}) )
+    if ( -e $annotation )
+    {
+        $tabix = Tabix->new('-data' => $annotation);        
+        $var = $tabix->read($tabix->query( "chr1", 179966427, 179966427));         
+    }
+    return $var;
+}
