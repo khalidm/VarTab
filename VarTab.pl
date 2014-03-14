@@ -21,8 +21,29 @@ use Vcf;
 
 my $opts = parse_params();
 our %bedhash = {};
+our @tabix;
 
 bed_to_hash($opts);
+
+my @annotation_beds = ();
+if ( exists($$opts{annotate}) )
+{
+    @annotation_beds = split(',', $$opts{annotate});
+    if ( -e $annotation_beds[0] )
+    {
+        $tabix[0] = Tabix->new('-data' => $annotation_beds[0]);
+    }
+    else
+    {
+        print "Error: annotaion file $annotation_beds[0] not found. Please check if the file is bgzipped and tabix index.\n";
+    }
+    # bed_annotate($annotation_bed);
+}
+else 
+{
+    # set to default
+    # $annotation_beds = "False";
+}
 
 #convert_to_tab($opts, $slice_adaptor);
 convert_to_tab($opts);
@@ -162,25 +183,12 @@ sub convert_to_tab
         $freq_threshold = 5.0;
     }
 
-    # if annotation bed file provided
-    if ( exists($$opts{annotate}) )
-    {
-        $annotation_bed = $$opts{annotate};
-        bed_annotate($annotation_bed);
-    }
-    else 
-    {
-        # set to default
-        $annotation_bed = "False";
-    }
-
     # check print flanking sequence : requires genome fasta file
     if (exists($$opts{sequence}))
     {
         $getseq = "T";
     }
    
-
     my $iupac;
     if ( $$opts{iupac} ) { $iupac=$$opts{iupac}; }
 
@@ -202,7 +210,7 @@ sub convert_to_tab
             #print "dbSNP_ID\tChr\tPOS\tREF\tALT\tCount\tFreq\tGENE\tTYPE\tNETWORK\tTFP\tDNASE";
             #NO EARLY COUNTS
             print "dbSNP_ID\tChr\tPOS\tREF\tALT\tGENE\tTYPE\tNETWORK\tTF_binding_peak\tDNASE";
-            print "\tCLINICAL\tAA_CHANGE\tConservation\tSampleFreq.HOM_REF\tSampleFreq.HET\tSampleFreq.HOM_ALT\tFS";
+            print "\tCLINICAL\tAA_CHANGE\tConservation\tRMSK\tSampleFreq.HOM_REF\tSampleFreq.HET\tSampleFreq.HOM_ALT\tFS";
             if($getseq eq "T") { print "\tFASTA"; }
             for my $col (sort keys %{$$x{gtypes}})
             {
@@ -216,14 +224,12 @@ sub convert_to_tab
         if( $$opts{nondbsnp} )
         {
             if($$x{ID} =~ m/^\./)
-            {
-                #print_info($x, $freq_threshold, $slice_adaptor, $vcf);
+            {         
                 print_info($x, $freq_threshold, $getseq, $vcf);
             }
         }
         else
-        {
-            #print_info($x, $freq_threshold, $slice_adaptor, $vcf);
+        {            
             print_info($x, $freq_threshold, $getseq, $vcf);
         }
     }
@@ -237,6 +243,7 @@ sub print_info
     my $getseq = shift;
     my $vcf = shift;
     my $bed = shift;
+    my $tabix = shift;
     my $slice_adaptor;
     my $fasta_str;
 
@@ -250,7 +257,6 @@ sub print_info
         #);
         #$slice_adaptor = $reg->get_adaptor( 'human', 'core', 'slice');
     }
-
 
     my @pairs = $$x{ALT};
     my $alt_str = join(', ', @pairs);
@@ -278,23 +284,9 @@ sub print_info
             $gt_string = "$gt_string\t$current_gt";
             
             $gt_array[$gt_index]++;
-            
-
-            #$gt_string = "$gt_string\t$col;$gt;$current_gt\t";            
-            #$gt_string = $gt.";";
-            #if ( $iupac )
-            #{
-            #    if ( !exists($$iupac{$gt}) ) { error(qq[Unknown IUPAC code for "$al1$sep$al2" .. $$x{CHROM}:$$x{POS} $col\n]); }
-            #           $gt = $$iupac{$gt};
-            #}
-                  
+                             
             if($alt eq $al2)
             {
-                #print "\t".$gt;
-                #print "\t".$col;
-                #$gt_string = "$gt_string\t$col";
-                #$gt_string = "$gt_string\t$col".$$x{gtypes}{$col}{GT};
-                #$$gt_string = "$$x{POS}\t";
                 if($$x{gtypes}{$col}{GT} eq "0/1")
                 {
                      $gt_het++;
@@ -310,15 +302,6 @@ sub print_info
                 #$gt_string = "$gt_string\t.";
             }
         }
-        
-        #if( $gt_counts == 0 )
-        #{
-        #    next;
-        #}
-        #my $prop_het = ( $gt_het/$gt_counts ) * 1.0;
-        #my $prop_hom = ( $gt_hom/$gt_counts ) * 1.0;
-        #my $gt_het_str = sprintf("%.3f", $prop_het);
-        #my $gt_hom_str = sprintf("%.3f", $prop_hom);
 
         my $prop_het = ( $gt_array[1]/$gt_counts ) * 1.0;
         my $prop_hom_ref = ( $gt_array[0]/$gt_counts ) * 1.0;
@@ -339,12 +322,7 @@ sub print_info
         {
             # TODO: make the feature of getting flanking fasta sequences optional
             if ($getseq eq "T")
-            {
-                #my $slice = $slice_adaptor->fetch_by_region('chromosome', $$x{CHROM}, $$x{POS}-60, $$x{POS}+60);
-                #my $seq = $slice->seq;
-                #my $seq_up = $slice->subseq(1,60);
-                #my $seq_down = $slice->subseq(62,121);
-                
+            {   
                 my $db = Bio::DB::Fasta->new('genome.fa');
                 #my $slice = $db->seq($$x{CHROM}, $$x{POS}-60 => $$x{POS}+60);
                 my $slice = $db->seq($$x{CHROM}, $$x{POS}-60 => $$x{POS}+60);
@@ -366,8 +344,10 @@ sub print_info
             my $gene_clndbn = get_annotations($x, "CLNDBN");
             my $aa_change = get_annotations($x, "SNPEFF_AMINO_ACID_CHANGE");
             my $phastcons = get_annotations($x, "PhastCons");
-            #TODO
+            # TO-DO
             my ($snpeff_type, $snpeff_gene, $snpeff_aa_change) = get_snpEffannotations($x);
+            # TO-DO ADD 
+            my $rmsk = bed_annotate($$x{CHROM},$$x{POS}-1,$$x{POS});
 
             # check gene name from several sources
             if($fun_gene eq ".")
@@ -397,6 +377,7 @@ sub print_info
             #print ",$snpeff_gene";
             print "\t$snpeff_aa_change";
             print "\t$phastcons";
+            print "\t$rmsk";
             print "\t$prop_homr_str";
             print "\t$prop_het_str";
             print "\t$prop_homa_str";
@@ -539,7 +520,8 @@ sub print_info_html
     }
 }
 
-
+# PARSE FUNSEQ OUTPUT IN BED FORMAT
+# TO-DO CHANGE TO TABIX 
 sub parse_fun_bed
 {
     #print "size of the hash:  " . keys( %bedhash ) . ".\n";
@@ -711,22 +693,24 @@ sub get_gt_type
 
 sub bed_annotate
 {
-    my $annotation = shift;
+    # my $annotation_tabix = shift;
     my $chr = shift;
     my $start = shift;
     my $end = shift;
-    # Initialize the annotation reader
-    #my $reader;
-    #my $prev_chr;
-    #my $prev_pos;
-    #my $vcf;
-    my $var = ".";
-    my $tabix;
-    # if ( exists($$opts{annotations}) )
-    if ( -e $annotation )
-    {
-        $tabix = Tabix->new('-data' => $annotation);        
-        $var = $tabix->read($tabix->query( "chr1", 179966427, 179966427));         
+    my @var = ();
+    # my $tabix;
+    
+    @var =split('\t', $tabix[0]->read($tabix[0]->query( $chr, $start, $end)));
+
+    # print "\n--->";
+    # print join(",", @var);
+    # print "\n";
+
+    if (0+@var > 0) {
+        return ($var[3]);
     }
-    return $var;
+    else
+    {
+        return (".");
+    }
 }
