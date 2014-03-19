@@ -12,7 +12,6 @@ use JSON;
 use Data::Dumper;
 use Carp;
 use Tabix;
-#package Reader;
 
 use strict;
 #use warnings;
@@ -29,9 +28,11 @@ my @annotation_beds = ();
 if ( exists($$opts{annotate}) )
 {
     @annotation_beds = split(',', $$opts{annotate});
-    if ( -e $annotation_beds[0] )
+    if ( -e $annotation_beds[0] && -e $annotation_beds[1] && -e $annotation_beds[2])
     {
         $tabix[0] = Tabix->new('-data' => $annotation_beds[0]);
+        $tabix[1] = Tabix->new('-data' => $annotation_beds[1]);
+        $tabix[2] = Tabix->new('-data' => $annotation_beds[2]);
     }
     else
     {
@@ -210,7 +211,7 @@ sub convert_to_tab
             #print "dbSNP_ID\tChr\tPOS\tREF\tALT\tCount\tFreq\tGENE\tTYPE\tNETWORK\tTFP\tDNASE";
             #NO EARLY COUNTS
             print "dbSNP_ID\tChr\tPOS\tREF\tALT\tGENE\tTYPE\tNETWORK\tTF_binding_peak\tDNASE";
-            print "\tCLINICAL\tAA_CHANGE\tConservation\tRMSK\tSampleFreq.HOM_REF\tSampleFreq.HET\tSampleFreq.HOM_ALT\tFS";
+            print "\tCLINICAL\tAA_CHANGE\tConservation\tRMSK\tCpG\tGWAS\tSampleFreq.HOM_REF\tSampleFreq.HET\tSampleFreq.HOM_ALT\tFS";
             if($getseq eq "T") { print "\tFASTA"; }
             for my $col (sort keys %{$$x{gtypes}})
             {
@@ -347,7 +348,9 @@ sub print_info
             # TO-DO
             my ($snpeff_type, $snpeff_gene, $snpeff_aa_change) = get_snpEffannotations($x);
             # TO-DO ADD 
-            my $rmsk = bed_annotate($$x{CHROM},$$x{POS}-1,$$x{POS});
+            my $rmsk = bed_annotate($$x{CHROM},$$x{POS}-1,$$x{POS}, 0);
+            my $gwas = bed_annotate($$x{CHROM},$$x{POS}-1,$$x{POS}, 1);
+            my $cpg = bed_annotate($$x{CHROM},$$x{POS}-1,$$x{POS}, 2);
 
             # check gene name from several sources
             if($fun_gene eq ".")
@@ -378,6 +381,8 @@ sub print_info
             print "\t$snpeff_aa_change";
             print "\t$phastcons";
             print "\t$rmsk";
+            print "\t$cpg";
+            print "\t$gwas";
             print "\t$prop_homr_str";
             print "\t$prop_het_str";
             print "\t$prop_homa_str";
@@ -697,10 +702,17 @@ sub bed_annotate
     my $chr = shift;
     my $start = shift;
     my $end = shift;
+    my $annotation_id = shift;
     my @var = ();
+    # my @rmsk = ();
+    # my @gwas = ();
+    # my @cpg = ();
     # my $tabix;
     
-    @var =split('\t', $tabix[0]->read($tabix[0]->query( $chr, $start, $end)));
+    @var =split('\t', $tabix[$annotation_id]->read($tabix[$annotation_id]->query( $chr, $start, $end)));
+    #@rmsk = split('\t', $tabix[0]->read($tabix[0]->query( $chr, $start, $end)));
+    #@gwas = split('\t', $tabix[0]->read($tabix[0]->query( $chr, $start, $end)));
+    #@cpg = split('\t', $tabix[0]->read($tabix[0]->query( $chr, $start, $end)));
 
     # print "\n--->";
     # print join(",", @var);
