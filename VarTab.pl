@@ -349,6 +349,7 @@ sub print_info
             my ($snpeff_type, $snpeff_gene, $snpeff_aa_change) = get_snpEffannotations($x);
             # TO-DO ADD 
             my $rmsk = bed_annotate($$x{CHROM},$$x{POS}-1,$$x{POS}, 0);
+            #my $rmsk = ".";
             my $gwas = bed_annotate($$x{CHROM},$$x{POS}-1,$$x{POS}, 1);
             my $cpg = bed_annotate($$x{CHROM},$$x{POS}-1,$$x{POS}, 2);
 
@@ -369,8 +370,8 @@ sub print_info
             #print "\t$gt_freq";
             print "\t$info_string";
             
-            print "\t$fun_type";
-            print ":$snpeff_type";
+            # BUG ISSUE #3 print "\t$fun_type:";
+            print "\t$snpeff_type";
             
             print "\t$fun_network";
             print "\t$fun_tfp";
@@ -620,7 +621,8 @@ sub parse_fun_bed
     }
 
     #$output = $gene."\t".$type."\t".$network."\t".$tfp."\t".$dnase;
-    return ($gene, $type, $network, $tfp, $dnase, $highlight);
+    # BUG: TYPE ISSUE
+    return ($gene, $type, $network, $tfp, $dnase, $highlight);    
     #return $output;
 }
 
@@ -672,6 +674,10 @@ sub get_snpEffannotations
     {
         $eff_type = ".";
     }
+    if($eff_aa_change eq "")
+    {
+        $eff_aa_change = ".";
+    }
     return ($eff_type, $eff_gene, $eff_aa_change);
 }
 
@@ -719,7 +725,12 @@ sub bed_annotate
     # print "\n";
 
     if (0+@var > 0) {
-        return ($var[3]);
+        if($var[3] ne ""){
+            return ($var[3]);
+        }
+        else{
+            return (".");
+        }
     }
     else
     {
