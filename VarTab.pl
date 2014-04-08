@@ -33,6 +33,8 @@ if ( exists($$opts{annotate}) )
         $tabix[0] = Tabix->new('-data' => $annotation_beds[0]);
         $tabix[1] = Tabix->new('-data' => $annotation_beds[1]);
         $tabix[2] = Tabix->new('-data' => $annotation_beds[2]);
+        $tabix[3] = Tabix->new('-data' => $annotation_beds[3]);
+        $tabix[4] = Tabix->new('-data' => $annotation_beds[4]);
     }
     else
     {
@@ -352,6 +354,8 @@ sub print_info
             #my $rmsk = ".";
             my $gwas = bed_annotate($$x{CHROM},$$x{POS}-1,$$x{POS}, 1);
             my $cpg = bed_annotate($$x{CHROM},$$x{POS}-1,$$x{POS}, 2);
+            my $clinvar = bed_annotate($$x{CHROM},$$x{POS}-1,$$x{POS}, 3);
+            my $gwascatalog = bed_annotate($$x{CHROM},$$x{POS}-1,$$x{POS}, 4);
 
             # check gene name from several sources
             if($fun_gene eq ".")
@@ -377,13 +381,13 @@ sub print_info
             print "\t$fun_tfp";
             print "\t$fun_dnase";
             if($getseq eq "T") { print "\t$fasta_str"; }
-            print "\t$gene_clndbn";
+            print "\t$gene_clndbn:$clinvar";
             #print ",$snpeff_gene";
             print "\t$snpeff_aa_change";
             print "\t$phastcons";
             print "\t$rmsk";
             print "\t$cpg";
-            print "\t$gwas";
+            print "\t$gwas:$gwascatalog";
             print "\t$prop_homr_str";
             print "\t$prop_het_str";
             print "\t$prop_homa_str";
@@ -720,9 +724,9 @@ sub bed_annotate
     #@gwas = split('\t', $tabix[0]->read($tabix[0]->query( $chr, $start, $end)));
     #@cpg = split('\t', $tabix[0]->read($tabix[0]->query( $chr, $start, $end)));
 
-    # print "\n--->";
-    # print join(",", @var);
-    # print "\n";
+    #print "\n--->";
+    #print join(",", @var);
+    #print "\n";
 
     if (0+@var > 0) {
         if($var[3] ne ""){
