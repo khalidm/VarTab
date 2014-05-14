@@ -16,8 +16,9 @@ use Tabix;
 use Exporter qw(import);
 use File::Basename qw(dirname);
 use Cwd qw(abs_path);
-use lib dirname(dirname abs_path $0) . './lib';
-use Var::Tab qw(add);
+use lib dirname(dirname abs_path $0) . '/lib';
+use Var::Tab qw( get_gene_counts get_ann );
+use Misc::Calc qw( percent_to_count_threshold );
 
 use strict;
 #use warnings;
@@ -26,6 +27,7 @@ use Vcf;
 
 my $opts = parse_params();
 our %bedhash = {};
+our %vargenecounts = {};
 our @tabix;
 
 bed_to_hash($opts);
@@ -40,7 +42,7 @@ if ( exists($$opts{annotate}) )
         $tabix[1] = Tabix->new('-data' => $annotation_beds[1]);
         $tabix[2] = Tabix->new('-data' => $annotation_beds[2]);
         $tabix[3] = Tabix->new('-data' => $annotation_beds[3]);
-        #$tabix[4] = Tabix->new('-data' => $annotation_beds[4]);
+        $tabix[4] = Tabix->new('-data' => $annotation_beds[4]);
     }
     else
     {
@@ -56,6 +58,8 @@ else
 
 #convert_to_tab($opts, $slice_adaptor);
 convert_to_tab($opts);
+get_gene_counts($opts);
+#add(2,2);
 
 exit;
 
@@ -69,7 +73,7 @@ sub error
         croak @msg;
     }
     die
-        "Usage: vcf-to-tab [OPTIONS] < in.vcf > out.tab\n",
+        "Usage: vcf-to-tab [OPTIONS] -v in.vcf > out.tab\n",
         "Options:\n",
         "   -h, -?, --help                   This help message.\n",
         "   -i, --iupac                      Use one-letter IUPAC codes\n",
@@ -78,6 +82,8 @@ sub error
         "   -b, --bedfile                    Annotation file (bed file)\n",
         "   -a, --annotate                   Annotation file (bgzip bed + tabix indexed file)\n",
         "   -n, --nondbsnp                   Keep only non-dbsnp variants (assumes the ID tag is populated in the vcf)\n",
+        "   -v, --input                      Input vcf file.\n",
+        "   -o, --output                     Output prefix.\n",
         "\n";
 }
 
@@ -100,6 +106,8 @@ sub parse_params
         if ( $arg eq '-b' || $arg eq '--bedfile' ) { $$opts{bedfile}=shift(@ARGV); next; }
         if ( $arg eq '-a' || $arg eq '--annotate' ) { $$opts{annotate}=shift(@ARGV); next; }
         if ( $arg eq '-n' || $arg eq '--nondbsnp' ) { $$opts{nondbsnp}=1; next; }
+        if ( $arg eq '-v' || $arg eq '--input' ) { $$opts{input}=shift(@ARGV); next; }
+        if ( $arg eq '-o' || $arg eq '--output' ) { $$opts{output}=shift(@ARGV); next; }
         error("Unknown parameter \"$arg\". Run -h for help.\n");
     }
     
@@ -133,7 +141,6 @@ sub parse_params
             '..' => '.',
         };
     }
-
     return $opts;
 }
 
@@ -201,11 +208,22 @@ sub convert_to_tab
     my $iupac;
     if ( $$opts{iupac} ) { $iupac=$$opts{iupac}; }
 
-    my $vcf = Vcf->new(fh=>\*STDIN);
+    my $input = $$opts{input};
+    my $output = $$opts{output};
+    
+    # output file names
+    my $outputtab = $output.".tab";
+    #my $outputburden = $output.".burden";
+    # OPEN OUTPUT FILE PREFIX.tab
+    open(OUTTAB, ">$outputtab") || die "Can't open the file: $outputtab: $!\n";
+
+    #my $vcf = Vcf->new(fh=>\*STDIN);
+    my $vcf = Vcf->new(file=>$input);
     $vcf->parse_header();
 
     my $header_printed=0;
     my $total = 0;
+    my $print_string;
 
     while (my $x=$vcf->next_data_hash())
     {
@@ -218,14 +236,14 @@ sub convert_to_tab
             #NO HET HOM percentage
             #print "dbSNP_ID\tChr\tPOS\tREF\tALT\tCount\tFreq\tGENE\tTYPE\tNETWORK\tTFP\tDNASE";
             #NO EARLY COUNTS
-            print "dbSNP_ID\tChr\tPOS\tREF\tALT\tGENE\tTYPE\tNETWORK\tTF_binding_peak\tDNASE";
-            print "\tCLINICAL\tAA_CHANGE\tConservation\tRMSK\tCpG\tGWAS\tSampleFreq.HOM_REF\tSampleFreq.HET\tSampleFreq.HOM_ALT\tFS";
-            if($getseq eq "T") { print "\tFASTA"; }
+            print OUTTAB "dbSNP_ID\tChr\tPOS\tREF\tALT\tGENE\tTYPE\tNETWORK\tTF_binding_peak\tDNASE";
+            print OUTTAB "\tCLINICAL\tAA_CHANGE\tConservation\tRMSK\tCpG\tGWAS\tSampleFreq.HOM_REF\tSampleFreq.HET\tSampleFreq.HOM_ALT\tFS";
+            if($getseq eq "T") { print OUTTAB "\tFASTA"; }
             for my $col (sort keys %{$$x{gtypes}})
             {
-                print "\t$col";
+                print OUTTAB "\t$col";
             }
-            print "\n";
+            print OUTTAB "\n";
 
             $header_printed = 1;
         }
@@ -234,15 +252,19 @@ sub convert_to_tab
         {
             if($$x{ID} =~ m/^\./)
             {         
-                print_info($x, $freq_threshold, $getseq, $vcf);
+                print_info($x, $freq_threshold, $getseq, $vcf, $output);
             }
         }
         else
         {            
-            print_info($x, $freq_threshold, $getseq, $vcf);
+            #print_info($x, $freq_threshold, $getseq, $vcf, $output);
+            $print_string = print_info($x, $freq_threshold, $getseq, $vcf, $output);
+            print OUTTAB $print_string;
         }
     }
-    print "Total = $total\n";
+    print OUTTAB "Total = $total\n";
+    close OUTTAB;
+    $vcf->close();
 }
 
 sub print_info
@@ -253,8 +275,16 @@ sub print_info
     my $vcf = shift;
     my $bed = shift;
     my $tabix = shift;
+    my $output = shift;
     my $slice_adaptor;
     my $fasta_str;
+    my $return_info;
+
+    # output tab filename
+    #my $outputtab = $output.".tab";
+    #print $outputtab."--\n";
+    # OPEN OUTPUT FILE PREFIX.tab
+    #open(OUTTAB, ">$outputtab") || die "Can't open the file: $outputtab: $!\n";    
 
     #if (exists($$opts{sequence}))
     if ($getseq eq "T")
@@ -266,7 +296,7 @@ sub print_info
         #);
         #$slice_adaptor = $reg->get_adaptor( 'human', 'core', 'slice');
     }
-
+    
     my @pairs = $$x{ALT};
     my $alt_str = join(', ', @pairs);
     my $alt_len = scalar @{$$x{ALT}};
@@ -304,7 +334,6 @@ sub print_info
                 {
                     $gt_hom++;
                 }
-                # $gt_counts++;
             } else 
             {
                 #$gt_string = "$gt_string\t*$alt/$al2";
@@ -323,6 +352,7 @@ sub print_info
         #$freq_threshold = ( $temp_count/$gt_size ) * 1.0;
         my $gt_freq_temp = ( ( $gt_counts/$gt_size ) * 1.0 );
         my $gt_freq = sprintf("%.3f", $gt_freq_temp);
+        #$gt_freq = percent_to_count_threshold($freq_threshold, $gt_size, $gt_counts);
 
         #print " $gt_array[0] \t $gt_array[1] \t $gt_array[2] \t $gt_array[3] \t $gt_counts \t $temp_count \n";
         
@@ -361,7 +391,7 @@ sub print_info
             my $gwas = bed_annotate($$x{CHROM},$$x{POS}-1,$$x{POS}, 1);
             my $cpg = bed_annotate($$x{CHROM},$$x{POS}-1,$$x{POS}, 2);
             my $clinvar = bed_annotate($$x{CHROM},$$x{POS}-1,$$x{POS}, 3);
-            #my $gwascatalog = bed_annotate($$x{CHROM},$$x{POS}-1,$$x{POS}, 3);
+            my $gwascatalog = ord(bed_annotate($$x{CHROM},$$x{POS}-1,$$x{POS}, 3));
 
             # check gene name from several sources
             if($fun_gene eq ".")
@@ -374,39 +404,63 @@ sub print_info
             }
             
             #my $info_string = "$gene_info[0]|$snpeff_gene|$fun_gene";
-
-            print "$$x{ID}\t$$x{CHROM}\t$$x{POS}\t$$x{REF}\t$alt";
-            #print "\t$gt_counts";
-            #print "\t$gt_freq";
-            print "\t$info_string";
+            #
+            #
+		    $return_info = "$$x{ID}\t$$x{CHROM}\t$$x{POS}\t$$x{REF}\t$alt";
+            $return_info = $return_info."\t$info_string";
+		    $return_info = $return_info."\t$snpeff_type";
+		    $return_info = $return_info."\t$fun_network";
+		    $return_info = $return_info."\t$fun_tfp";
+		    $return_info = $return_info."\t$fun_dnase";
+		    if($getseq eq "T") { $return_info = $return_info."\t$fasta_str"; }
+		    $return_info = $return_info."\t$gene_clndbn:$clinvar";
+		    $return_info = $return_info."\t$snpeff_aa_change";
+		    $return_info = $return_info."\t$phastcons";
+		    $return_info = $return_info."\t$rmsk";
+		    $return_info = $return_info."\t$cpg";
+            #$return_info = $return_info.#"\t$gwas";
+		    $return_info = $return_info."\t$gwas:$gwascatalog";
+		    $return_info = $return_info."\t$prop_homr_str";
+		    $return_info = $return_info."\t$prop_het_str";
+            $return_info = $return_info."\t$prop_homa_str";
+            if($highlight eq "T") { $return_info = $return_info."\t*"; } else { $return_info = $return_info."\t."; }
+            $return_info = $return_info."$gt_string";
+            $return_info = $return_info."\n";
+            #
+            ##print OUTTAB "$$x{ID}\t$$x{CHROM}\t$$x{POS}\t$$x{REF}\t$alt";
+            ###print OUTTAB "\t$gt_counts";
+            ###print OUTTAB "\t$gt_freq";
+            ##print OUTTAB "\t$info_string";
             
-            # BUG ISSUE #3 print "\t$fun_type:";
-            print "\t$snpeff_type";
+            ###BUG ISSUE #3 print OUTTAB "\t$fun_type:";
+            ##print "\t$snpeff_type";
             
-            print "\t$fun_network";
-            print "\t$fun_tfp";
-            print "\t$fun_dnase";
-            if($getseq eq "T") { print "\t$fasta_str"; }
-            print "\t$gene_clndbn:$clinvar";
-            #print ",$snpeff_gene";
-            print "\t$snpeff_aa_change";
-            print "\t$phastcons";
-            print "\t$rmsk";
-            print "\t$cpg";
+            ##print OUTTAB "\t$fun_network";
+            ##print OUTTAB "\t$fun_tfp";
+            ##print OUTTAB "\t$fun_dnase";
+            ##if($getseq eq "T") { print OUTTAB "\t$fasta_str"; }
+            ##print OUTTAB "\t$gene_clndbn:$clinvar";
+            ###print OUTTAB ",$snpeff_gene";
+            ##print OUTTAB "\t$snpeff_aa_change";
+            ##print OUTTAB "\t$phastcons";
+            ##print OUTTAB "\t$rmsk";
+            ##print OUTTAB "\t$cpg";
             
-            print "\t$gwas";
-            #print "\t$gwas:$gwascatalog";
+            ###print OUTTAB "\t$gwas";
+            ##print OUTTAB "\t$gwas:$gwascatalog";
             
-            print "\t$prop_homr_str";
-            print "\t$prop_het_str";
-            print "\t$prop_homa_str";
-            if($highlight eq "T") { print "\t*"; } else { print "\t."; }
-            print "$gt_string";
-            #print "\t$snpeff_gene";
-            #print "\t$gt_array[3]";
-            print "\n";
+            ##print OUTTAB "\t$prop_homr_str";
+            ##print OUTTAB "\t$prop_het_str";
+            ##print OUTTAB "\t$prop_homa_str";
+            ##if($highlight eq "T") { print OUTTAB "\t*"; } else { print OUTTAB "\t."; }
+            ##print OUTTAB "$gt_string";
+            ###print OUTTAB "\t$snpeff_gene";
+            ###print OUTTAB "\t$gt_array[3]";
+            ##print OUTTAB "\n";
         }
     }
+    #close OUTTAB;
+    return $return_info;
 }
 
 # PRINT HTML
