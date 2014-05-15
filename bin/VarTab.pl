@@ -43,6 +43,8 @@ if ( exists($$opts{annotate}) )
         $tabix[2] = Tabix->new('-data' => $annotation_beds[2]);
         $tabix[3] = Tabix->new('-data' => $annotation_beds[3]);
         $tabix[4] = Tabix->new('-data' => $annotation_beds[4]);
+        $tabix[5] = Tabix->new('-data' => $annotation_beds[5]); # tfbs
+        $tabix[6] = Tabix->new('-data' => $annotation_beds[6]); # dnase
     }
     else
     {
@@ -392,6 +394,8 @@ sub print_info
             my $cpg = bed_annotate($$x{CHROM},$$x{POS}-1,$$x{POS}, 2);
             my $clinvar = bed_annotate($$x{CHROM},$$x{POS}-1,$$x{POS}, 3);
             my $gwascatalog = ord(bed_annotate($$x{CHROM},$$x{POS}-1,$$x{POS}, 3));
+            my $encode_tfbs = bed_annotate($$x{CHROM},$$x{POS}-1,$$x{POS}, 5);
+            my $encode_dnase = bed_annotate($$x{CHROM},$$x{POS}-1,$$x{POS}, 6);
 
             # check gene name from several sources
             if($fun_gene eq ".")
@@ -410,9 +414,14 @@ sub print_info
             $return_info = $return_info."\t$info_string";
 		    $return_info = $return_info."\t$snpeff_type";
 		    $return_info = $return_info."\t$fun_network";
-		    $return_info = $return_info."\t$fun_tfp";
-		    $return_info = $return_info."\t$fun_dnase";
-		    if($getseq eq "T") { $return_info = $return_info."\t$fasta_str"; }
+            
+            #$return_info = $return_info."\t$fun_tfp";
+		    $return_info = $return_info."\t$encode_tfbs";
+		    
+            #$return_info = $return_info."\t$fun_dnase";
+            $return_info = $return_info."\t$encode_dnase";
+		    
+            if($getseq eq "T") { $return_info = $return_info."\t$fasta_str"; }
 		    $return_info = $return_info."\t$gene_clndbn:$clinvar";
 		    $return_info = $return_info."\t$snpeff_aa_change";
 		    $return_info = $return_info."\t$phastcons";

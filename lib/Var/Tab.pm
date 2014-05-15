@@ -51,6 +51,7 @@ sub get_gene_counts {
     my $header_printed=0;
     my $total = 0;
     my $snpeff_gene;
+    my $snpeff_type;
     my %count;
 
     while (my $x=$vcf->next_data_hash())
@@ -86,9 +87,14 @@ sub get_gene_counts {
             #print $x."\n";
             #$snpeff_gene = get_ann($x, "SNPEFF_GENE_NAME");
             #my ($snpeff_type, $snpeff_gene, $snpeff_aa_change) = get_snpEffannotations($x);
-            $snpeff_gene = get_snpeff_ann($x);
+            
+            #$snpeff_gene = get_snpeff_ann($x);
+            ($snpeff_type, $snpeff_gene) = get_snpeff_ann($x);
+            
             #$vargenecounts{$snpeff_gene}++;
-            $count{$snpeff_gene}++;
+            if($snpeff_type eq "NON_SYNONYMOUS_CODING"){
+                $count{$snpeff_gene}++;
+            }
         }
     }
     $vcf->close();
@@ -101,6 +107,7 @@ sub get_gene_counts {
         $gene_var_freq = $count{$str}/$sample_count;
         #printf OUTBUR "%-31s %s\t%s\t%s\n", $str, $gene_var_freq, $count{$str}, $sample_count;
         printf OUTBUR "%s\t%0.5f\t%s\t%s\n", $str, $gene_var_freq, $count{$str}, $sample_count;
+        #printf OUTBUR "%s\t%s\n", $$x{CHROM},$$x{POS};
     }
 
     #print OUTBUR "\n";
@@ -164,7 +171,7 @@ sub get_snpeff_ann
         $eff_aa_change = ".";
     }
     #return ($eff_type, $eff_gene, $eff_aa_change);
-    return $eff_gene;
+    return ($eff_type, $eff_gene);
 }
 
 1;
