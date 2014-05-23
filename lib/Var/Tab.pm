@@ -4,10 +4,10 @@ use strict;
 use Carp;
 use Data::Dumper;
 use Vcf;
- 
+
 use Exporter qw(import);
  
-our @EXPORT_OK = qw(get_gene_counts get_ann);
+our @EXPORT_OK = qw(get_gene_counts get_ann bed_annotate_cpg bed_annotate_tfbs bed_annotate_polyphen bed_annotate_gwascatalog);
 
 #
 # gene burden
@@ -172,6 +172,159 @@ sub get_snpeff_ann
     }
     #return ($eff_type, $eff_gene, $eff_aa_change);
     return ($eff_type, $eff_gene);
+}
+
+
+sub bed_annotate_cpg
+{
+    # my $annotation_tabix = shift;
+    my $chr = shift;
+    my $start = shift;
+    my $end = shift;
+    my $annotation_id = shift;
+    #my @tabix_current = shift;
+    my @var = ();
+    #my @var_array = ();
+    #my $out_str = "";
+	
+    #@snp_tabix = split /\n/, `tabix $tgp_snp -B $input | awk '{FS="\t";OFS="\t"} \$4 >= $maf_cut_off'`;	
+    
+    #@var = split('\n', $tabix_current[$annotation_id]->read($tabix_current[$annotation_id]->query( $chr, $start, $end)));
+    @var = split('\n', $main::tabix[$annotation_id]->read($main::tabix[$annotation_id]->query( $chr, $start, $end)));
+    
+    if (0+@var > 0){
+        return "T";
+    } else {
+        return ".";
+    }
+}
+
+sub bed_annotate_tfbs
+{
+    # my $annotation_tabix = shift;
+    my $chr = shift;
+    my $start = shift;
+    my $end = shift;
+    my $annotation_id = shift;
+    #my @tabix_current = shift;
+    my @var = ();
+    my @var_array = ();
+    my @tfbs_array = ();
+    #my $out_str = "";
+
+    #my $ann_bed = $main::annotation_beds[$annotation_id];
+    my $ann_bed = $annotation_id;
+    my $input = $chr.":".$start."-".$end;
+
+    #print "ANN BED = ".$ann_bed."\n";
+    #print "ANN INPUT = ".$input."\n";
+	
+    #@var = split /\n/, `tabix $ann_bed -B $input | awk ' { print \$4 }awk '{FS="\t";OFS="\t"} \$4 >= $maf_cut_off'`;	
+    @var = split /\n/, `tabix $ann_bed -B $input | awk ' { print \$4"\t"\$5 } '`;
+
+    #print "ANN SIZE = ".0+@var."\n";
+    
+    my $tfbs = "";
+    my $current_cell_count = 0;
+    if (0+@var <= 0){
+        return ".";
+    } else {
+        # split tabix returned string - return string with highest cell count for the transcription factor (ENCODE - wgEncodeRegTfbsClusteredV2)
+        foreach my $snp (@var) {
+            @var_array = split('\t', $snp);
+            if (0+@var_array > 0) {
+                #$current_cell_count = $var_array[1];
+                if($var_array[1]>$current_cell_count){
+                    $current_cell_count = $var_array[1];
+                    if($var_array[0] ne ""){
+                        #return ($var_array[3]);
+                        #$tfbs = $tfbs.";".$var_array[0];
+                        $tfbs = $tfbs.";".$var_array[0]."(".$var_array[1].")";
+                    }
+                    else{
+                        return (".");
+                    }
+                }
+            } else {
+                return (".");
+            }
+        }
+    }
+    #print "ANN = ".$tfbs."\n";
+    return $tfbs;
+}
+
+# get polyphen scores
+sub bed_annotate_polyphen {
+    # my $annotation_tabix = shift;
+    my $chr = shift;
+    my $start = shift;
+    my $end = shift;
+    my $annotation_id = shift;
+    my $ref = shift;
+    my $alt = shift;
+    #my @tabix_current = shift;
+    my @var = ();
+    my @var_array = ();
+    my @annotation_array = ();
+
+    my $ann_bed = $annotation_id;
+    my $input = $chr.":".$start."-".$end;
+
+    ##print "ANN BED = ".$ann_bed."\n";
+    #print "ANN INPUT = ".$input."\t";
+    #print "ANN REF/ALT = ".$ref."\/".$alt."\t";
+	
+    @var = split /\n/, `tabix $ann_bed -B $input | awk ' { print \$0 } '`;
+
+    my $polyphen = "";
+    
+    if (0+@var <= 0) {
+        return ".";
+    } else {
+        # split tabix returned string - return string with highest cell count for the transcription factor (ENCODE - wgEncodeRegTfbsClusteredV2)
+        foreach my $snp (@var) {
+            @var_array = split('\t', $snp);
+            #print "$ref=$var_array[3]\t$alt=$var_array[4]\t";
+            if (0+@var_array > 0 && $ref eq $var_array[3] && $alt eq $var_array[4]) {
+                #print "$ref=$var_array[3]\t$alt=$var_array[4]\t";
+                $polyphen = $var_array[5]."(".$var_array[6].")";
+            } 
+        }
+    }
+    #print "\n";
+    return $polyphen;
+}
+
+# get gwascatalog data
+sub bed_annotate_gwascatalog {
+    # my $annotation_tabix = shift;
+    my $chr = shift;
+    my $start = shift;
+    my $end = shift;
+    my $annotation_id = shift;
+    my @var = ();
+    my @var_array = ();
+    my @gwascatalog_temp = ();
+    my $gwascatalog = ".";
+    
+    @var = split('\n', $main::tabix[$annotation_id]->read($main::tabix[$annotation_id]->query( $chr, $start, $end)));
+
+    foreach my $snp (@var) {
+        @var_array = split('\t', $snp);
+        if (0+@var_array > 0) {
+            @gwascatalog_temp = split(';', $var_array[3]);
+            $gwascatalog = $gwascatalog_temp[0];        
+        }    
+    }
+
+    return $gwascatalog;
+
+    #if (0+@var > 0) {
+    #    return "T";
+    #} else {
+    #    return ".";
+    #}
 }
 
 1;

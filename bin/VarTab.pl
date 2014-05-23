@@ -12,12 +12,13 @@ use JSON;
 use Data::Dumper;
 use Carp;
 use Tabix;
+use File::Spec;
 
 use Exporter qw(import);
 use File::Basename qw(dirname);
 use Cwd qw(abs_path);
 use lib dirname(dirname abs_path $0) . '/lib';
-use Var::Tab qw( get_gene_counts get_ann );
+use Var::Tab qw( get_gene_counts get_ann bed_annotate_cpg bed_annotate_tfbs bed_annotate_polyphen bed_annotate_gwascatalog );
 use Misc::Calc qw( percent_to_count_threshold );
 
 use strict;
@@ -29,6 +30,7 @@ my $opts = parse_params();
 our %bedhash = {};
 our %vargenecounts = {};
 our @tabix;
+our @annotation_beds;
 
 bed_to_hash($opts);
 
@@ -38,13 +40,14 @@ if ( exists($$opts{annotate}) )
     @annotation_beds = split(',', $$opts{annotate});
     if ( -e $annotation_beds[0] && -e $annotation_beds[1] && -e $annotation_beds[2])
     {
-        $tabix[0] = Tabix->new('-data' => $annotation_beds[0]);
-        $tabix[1] = Tabix->new('-data' => $annotation_beds[1]);
-        $tabix[2] = Tabix->new('-data' => $annotation_beds[2]);
-        $tabix[3] = Tabix->new('-data' => $annotation_beds[3]);
-        $tabix[4] = Tabix->new('-data' => $annotation_beds[4]);
-        $tabix[5] = Tabix->new('-data' => $annotation_beds[5]); # tfbs
-        $tabix[6] = Tabix->new('-data' => $annotation_beds[6]); # dnase
+        $tabix[0] = Tabix->new('-data' => $annotation_beds[0]); # rmsk
+        #$tabix[1] = Tabix->new('-data' => $annotation_beds[1]); # gwas
+        $tabix[1] = Tabix->new('-data' => $annotation_beds[1]); # cpg
+        $tabix[2] = Tabix->new('-data' => $annotation_beds[2]); # clinvar
+        $tabix[3] = Tabix->new('-data' => $annotation_beds[3]); # gwas catalog
+        $tabix[4] = Tabix->new('-data' => $annotation_beds[4]); # tfbs
+        $tabix[5] = Tabix->new('-data' => $annotation_beds[5]); # dnase
+        $tabix[6] = Tabix->new('-data' => $annotation_beds[6]); # polyphen
     }
     else
     {
@@ -239,7 +242,7 @@ sub convert_to_tab
             #print "dbSNP_ID\tChr\tPOS\tREF\tALT\tCount\tFreq\tGENE\tTYPE\tNETWORK\tTFP\tDNASE";
             #NO EARLY COUNTS
             print OUTTAB "dbSNP_ID\tChr\tPOS\tREF\tALT\tGENE\tTYPE\tNETWORK\tTF_binding_peak\tDNASE";
-            print OUTTAB "\tCLINICAL\tAA_CHANGE\tConservation\tRMSK\tCpG\tGWAS\tSampleFreq.HOM_REF\tSampleFreq.HET\tSampleFreq.HOM_ALT\tFS";
+            print OUTTAB "\tCLINICAL\tAA_CHANGE\tConservation\tRMSK\tCpG\tGWAS\tPOLYPHEN\tSampleFreq.HOM_REF\tSampleFreq.HET\tSampleFreq.HOM_ALT\tFS";
             if($getseq eq "T") { print OUTTAB "\tFASTA"; }
             for my $col (sort keys %{$$x{gtypes}})
             {
@@ -389,14 +392,20 @@ sub print_info
             my ($snpeff_type, $snpeff_gene, $snpeff_aa_change) = get_snpEffannotations($x);
             # TO-DO ADD 
             my $rmsk = bed_annotate($$x{CHROM},$$x{POS}-1,$$x{POS}, 0);
+            $rmsk =~ s/\;$//g;
             #my $rmsk = ".";
-            my $gwas = bed_annotate($$x{CHROM},$$x{POS}-1,$$x{POS}, 1);
-            my $cpg = bed_annotate($$x{CHROM},$$x{POS}-1,$$x{POS}, 2);
-            my $clinvar = bed_annotate($$x{CHROM},$$x{POS}-1,$$x{POS}, 3);
-            my $gwascatalog = ord(bed_annotate($$x{CHROM},$$x{POS}-1,$$x{POS}, 3));
-            my $encode_tfbs = bed_annotate($$x{CHROM},$$x{POS}-1,$$x{POS}, 5);
-            my $encode_dnase = bed_annotate($$x{CHROM},$$x{POS}-1,$$x{POS}, 6);
-
+            #my $gwas = bed_annotate($$x{CHROM},$$x{POS}-1,$$x{POS}, 1);
+            my $cpg = bed_annotate_cpg($$x{CHROM},$$x{POS}-1,$$x{POS}, 1);
+            my $clinvar = bed_annotate($$x{CHROM},$$x{POS},$$x{POS}+1, 2);
+            my $gwascatalog = bed_annotate_gwascatalog($$x{CHROM},$$x{POS},$$x{POS}+1, 3);
+            #my $encode_tfbs = bed_annotate_tfbs($$x{CHROM},$$x{POS}-1,$$x{POS}, 5);
+            my $encode_tfbs = bed_annotate_tfbs($$x{CHROM},$$x{POS},$$x{POS}+1, File::Spec->rel2abs($annotation_beds[4]));
+            $encode_tfbs =~ s/^\;//g;
+            my $encode_dnase = bed_annotate($$x{CHROM},$$x{POS},$$x{POS}+1, 5);
+            my $polyphen_chr = $$x{CHROM};
+            $polyphen_chr =~ s/^chr//g;
+            my $polyphen = bed_annotate_polyphen($polyphen_chr,$$x{POS},$$x{POS}+1, File::Spec->rel2abs($annotation_beds[6]), $$x{REF}, $alt);
+            
             # check gene name from several sources
             if($fun_gene eq ".")
             {
@@ -427,8 +436,9 @@ sub print_info
 		    $return_info = $return_info."\t$phastcons";
 		    $return_info = $return_info."\t$rmsk";
 		    $return_info = $return_info."\t$cpg";
-            #$return_info = $return_info.#"\t$gwas";
-		    $return_info = $return_info."\t$gwas:$gwascatalog";
+            $return_info = $return_info."\t$gwascatalog";
+            #$return_info = $return_info."\t$gwas:$gwascatalog";
+            $return_info = $return_info."\t$polyphen";
 		    $return_info = $return_info."\t$prop_homr_str";
 		    $return_info = $return_info."\t$prop_het_str";
             $return_info = $return_info."\t$prop_homa_str";
@@ -786,30 +796,33 @@ sub bed_annotate
     my $end = shift;
     my $annotation_id = shift;
     my @var = ();
-    # my @rmsk = ();
-    # my @gwas = ();
-    # my @cpg = ();
-    # my $tabix;
+    my @var_array = ();
+    my $out_str = "";
+        
+    #@var =split('\t', $tabix[$annotation_id]->read($tabix[$annotation_id]->query( $chr, $start, $end)));
+    #@snp_tabix = split /\n/, `tabix $tgp_snp -B $input | awk '{FS="\t";OFS="\t"} \$4 >= $maf_cut_off'`;	
+    @var = split('\n', $tabix[$annotation_id]->read($tabix[$annotation_id]->query( $chr, $start, $end)));
     
-    @var =split('\t', $tabix[$annotation_id]->read($tabix[$annotation_id]->query( $chr, $start, $end)));
-    #@rmsk = split('\t', $tabix[0]->read($tabix[0]->query( $chr, $start, $end)));
-    #@gwas = split('\t', $tabix[0]->read($tabix[0]->query( $chr, $start, $end)));
-    #@cpg = split('\t', $tabix[0]->read($tabix[0]->query( $chr, $start, $end)));
-
-    #print "\n--->";
-    #print join(",", @var);
-    #print "\n";
-
-    if (0+@var > 0) {
-        if($var[3] ne ""){
-            return ($var[3]);
+    # return "." if empty tabix return empty string
+    if (0+@var == 0) {
+        return ".";
+    } else {
+        # split tabix returned string
+        foreach my $snp (@var){
+            @var_array = split('\t', $snp);
+            if (0+@var_array > 0) {
+                if($var_array[3] ne ""){
+                    return ($var_array[3]);
+                }
+                else{
+                    return (".");
+                }
+            }
+            else
+            {
+                return (".");
+            }
         }
-        else{
-            return (".");
-        }
-    }
-    else
-    {
-        return (".");
-    }
+    } 
 }
+
