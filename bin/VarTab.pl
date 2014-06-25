@@ -18,8 +18,8 @@ use Exporter qw(import);
 use File::Basename qw(dirname);
 use Cwd qw(abs_path);
 use lib dirname(dirname abs_path $0) . '/lib';
-use Var::Tab qw( get_gene_counts get_ann bed_annotate_cpg bed_annotate_tfbs bed_annotate_polyphen bed_annotate_gwascatalog );
-use Misc::Calc qw( percent_to_count_threshold );
+use Var::Tab qw( get_gene_counts get_ann bed_annotate_cpg bed_annotate_tfbs bed_annotate_polyphen bed_annotate_cadd bed_annotate_gwascatalog );
+use Misc::Calc qw( add multiply percent_to_count_threshold maf_filter );
 
 use strict;
 #use warnings;
@@ -31,28 +31,48 @@ our %bedhash = {};
 our %vargenecounts = {};
 our @tabix;
 our @annotation_beds;
+my $dbconfig = "lib/db.config";
+open (DBCONFIG, $dbconfig);
+my $index = 0;
 
-bed_to_hash($opts);
+# bed_to_hash($opts);
 
 my @annotation_beds = ();
 if ( exists($$opts{annotate}) )
 {
-    @annotation_beds = split(',', $$opts{annotate});
-    if ( -e $annotation_beds[0] && -e $annotation_beds[1] && -e $annotation_beds[2])
-    {
-        $tabix[0] = Tabix->new('-data' => $annotation_beds[0]); # rmsk
-        #$tabix[1] = Tabix->new('-data' => $annotation_beds[1]); # gwas
-        $tabix[1] = Tabix->new('-data' => $annotation_beds[1]); # cpg
-        $tabix[2] = Tabix->new('-data' => $annotation_beds[2]); # clinvar
-        $tabix[3] = Tabix->new('-data' => $annotation_beds[3]); # gwas catalog
-        $tabix[4] = Tabix->new('-data' => $annotation_beds[4]); # tfbs
-        $tabix[5] = Tabix->new('-data' => $annotation_beds[5]); # dnase
-        $tabix[6] = Tabix->new('-data' => $annotation_beds[6]); # polyphen
+    while (<DBCONFIG>) {
+        chomp;
+        my @dbconfig_temp = split(' ', $_);
+        $annotation_beds[$index] = @dbconfig_temp[2];
+        $tabix[$index] = Tabix->new('-data' => $annotation_beds[$index]);
+        $index++;
+        #print "$_\n";
     }
-    else
-    {
-        print "Error: annotaion file $annotation_beds[0] not found. Please check if the file is bgzipped and tabix index.\n";
-    }
+    #exit(0);
+
+    #'''
+    #@annotation_beds = split(',', $$opts{annotate});
+    #if ( -e $annotation_beds[0] && -e $annotation_beds[1] && -e $annotation_beds[2])
+    #{
+    #    $tabix[0] = Tabix->new('-data' => $annotation_beds[0]); # rmsk
+    #    $tabix[1] = Tabix->new('-data' => $annotation_beds[1]); # cpg
+    #    $tabix[2] = Tabix->new('-data' => $annotation_beds[2]); # clinvar
+    #    $tabix[3] = Tabix->new('-data' => $annotation_beds[3]); # gwas catalog
+    #    $tabix[4] = Tabix->new('-data' => $annotation_beds[4]); # tfbs
+    #    $tabix[5] = Tabix->new('-data' => $annotation_beds[5]); # dnase
+    #    $tabix[6] = Tabix->new('-data' => $annotation_beds[6]); # polyphen
+    #    $tabix[7] = Tabix->new('-data' => $annotation_beds[7]); # 1000 genome allele frequenciess
+    #    $tabix[8] = Tabix->new('-data' => $annotation_beds[8]); # gerp conservation
+    #    $tabix[9] = Tabix->new('-data' => $annotation_beds[9]); # ncrna + p_genes
+    #    $tabix[10] = Tabix->new('-data' => $annotation_beds[10]); # funseq nc_sensitive
+    #    $tabix[11] = Tabix->new('-data' => $annotation_beds[11]); # cadd phred score
+    #    $tabix[12] = Tabix->new('-data' => $annotation_beds[12]); # gencode promoter
+    #}
+    #else
+    #{
+    #    print "Error: annotaion file $annotation_beds[0] not found. Please check if the file is bgzipped and tabix index.\n";
+    #}
+    #'''
     # bed_annotate($annotation_bed);
 }
 else 
@@ -88,6 +108,8 @@ sub error
         "   -a, --annotate                   Annotation file (bgzip bed + tabix indexed file)\n",
         "   -n, --nondbsnp                   Keep only non-dbsnp variants (assumes the ID tag is populated in the vcf)\n",
         "   -v, --input                      Input vcf file.\n",
+        "   -m, --maf                        Minor allele frequency threhold.\n",
+        "   -k, --maf1kg                     1000 genome minor allele frequency threshold.\n",
         "   -o, --output                     Output prefix.\n",
         "\n";
 }
@@ -101,6 +123,9 @@ sub testhash
 
 sub parse_params
 {
+    if(@ARGV==0){
+        error();
+    }
     my $opts = { iupac=>0 };
     while (my $arg=shift(@ARGV))
     {
@@ -109,9 +134,12 @@ sub parse_params
         if ( $arg eq '-f' || $arg eq '--frequency' ) { $$opts{frequency}=shift(@ARGV); next; }
         if ( $arg eq '-s' || $arg eq '--sequence' ) { $$opts{sequence}=shift(@ARGV); next; }
         if ( $arg eq '-b' || $arg eq '--bedfile' ) { $$opts{bedfile}=shift(@ARGV); next; }
-        if ( $arg eq '-a' || $arg eq '--annotate' ) { $$opts{annotate}=shift(@ARGV); next; }
+        #if ( $arg eq '-a' || $arg eq '--annotate' ) { $$opts{annotate}=shift(@ARGV); next; }
+        if ( $arg eq '-a' || $arg eq '--annotate' ) { $$opts{annotate}=1; next; }
         if ( $arg eq '-n' || $arg eq '--nondbsnp' ) { $$opts{nondbsnp}=1; next; }
         if ( $arg eq '-v' || $arg eq '--input' ) { $$opts{input}=shift(@ARGV); next; }
+        if ( $arg eq '-m' || $arg eq '--maf' ) { $$opts{maf}=shift(@ARGV); next; }
+        if ( $arg eq '-k' || $arg eq '--maf1kg' ) { $$opts{maf1kg}=shift(@ARGV); next; }
         if ( $arg eq '-o' || $arg eq '--output' ) { $$opts{output}=shift(@ARGV); next; }
         error("Unknown parameter \"$arg\". Run -h for help.\n");
     }
@@ -228,7 +256,8 @@ sub convert_to_tab
 
     my $header_printed=0;
     my $total = 0;
-    my $print_string;
+    my $print_string = "";
+    my @maf_output = ();
 
     while (my $x=$vcf->next_data_hash())
     {
@@ -241,8 +270,12 @@ sub convert_to_tab
             #NO HET HOM percentage
             #print "dbSNP_ID\tChr\tPOS\tREF\tALT\tCount\tFreq\tGENE\tTYPE\tNETWORK\tTFP\tDNASE";
             #NO EARLY COUNTS
-            print OUTTAB "dbSNP_ID\tChr\tPOS\tREF\tALT\tGENE\tTYPE\tNETWORK\tTF_binding_peak\tDNASE";
-            print OUTTAB "\tCLINICAL\tAA_CHANGE\tConservation\tRMSK\tCpG\tGWAS\tPOLYPHEN\tSampleFreq.HOM_REF\tSampleFreq.HET\tSampleFreq.HOM_ALT\tFS";
+            # ORG print OUTTAB "dbSNP_ID\tChr\tPOS\tREF\tALT\tGENE\tTYPE\tCADD\tFS_SENSITIVE\tNETWORK\tTF_binding_peak\tDNASE";
+            # ORG print OUTTAB "\tCLINICAL\tAA_CHANGE\tConservation\tRMSK\tCpG\tGWAS\tPOLYPHEN\tncRNA_p_gene\tMAF\tSampleFreq.HOM_REF\tSampleFreq.HET\tSampleFreq.HOM_ALT\tFS";
+            print OUTTAB "dbSNP_ID\tChr\tPOS\tREF\tALT\tGENE\tAA\tTYPE\tCADD\tFUNSEQ\tPOLY_SIFT\tCONS\tTFBS\tDNASE";
+            print OUTTAB "\tCpG\tGWAS\tRMSK\tncRNA_p-gene\tCLINICAL\tMAF\tSampleFreq.HOM_REF\tSampleFreq.HET\tSampleFreq.HOM_ALT\tFS";
+            
+
             if($getseq eq "T") { print OUTTAB "\tFASTA"; }
             for my $col (sort keys %{$$x{gtypes}})
             {
@@ -257,14 +290,38 @@ sub convert_to_tab
         {
             if($$x{ID} =~ m/^\./)
             {         
-                print_info($x, $freq_threshold, $getseq, $vcf, $output);
+                # print_info($x, $freq_threshold, $getseq, $vcf, $output);
+                if( $$opts{maf1kg} ) {
+                    @maf_output = maf_filter($$x{CHROM},$$x{POS},$$x{POS}+1,7,$$opts{maf1kg});
+                    if ( $maf_output[0] == 1 ) {
+                        $print_string = print_info($x, $freq_threshold, $getseq, $vcf, $output);
+                        print OUTTAB $print_string;
+                    } elsif ( $maf_output[0] == 2 ) {
+                        $print_string = print_info($x, $freq_threshold, $getseq, $vcf, $output);
+                        print OUTTAB $print_string;
+                    }
+                } else {
+                    $print_string = print_info($x, $freq_threshold, $getseq, $vcf, $output);
+                    print OUTTAB $print_string;
+                }
             }
         }
         else
         {            
             #print_info($x, $freq_threshold, $getseq, $vcf, $output);
-            $print_string = print_info($x, $freq_threshold, $getseq, $vcf, $output);
-            print OUTTAB $print_string;
+            if( $$opts{maf1kg} ) {
+                @maf_output = maf_filter($$x{CHROM},$$x{POS},$$x{POS}+1,7,$$opts{maf1kg});
+                if ( $maf_output[0] == 1 ) {
+                    $print_string = print_info($x, $freq_threshold, $getseq, $vcf, $output);
+                    print OUTTAB $print_string;
+                } elsif ( $maf_output[0] == 2 ) {
+                    $print_string = print_info($x, $freq_threshold, $getseq, $vcf, $output);
+                    print OUTTAB $print_string;
+                }
+            } else {
+                $print_string = print_info($x, $freq_threshold, $getseq, $vcf, $output);
+                print OUTTAB $print_string;
+            }
         }
     }
     print OUTTAB "Total = $total\n";
@@ -349,9 +406,12 @@ sub print_info
         my $prop_het = ( $gt_array[1]/$gt_counts ) * 1.0;
         my $prop_hom_ref = ( $gt_array[0]/$gt_counts ) * 1.0;
         my $prop_hom_alt = ( $gt_array[2]/$gt_counts ) * 1.0;        
+        my $maf = ((($gt_array[0] * 0.0) + ($gt_array[1] * 1.0) + ($gt_array[2] * 2.0))/$gt_counts ) * 1.0;
+        
         my $prop_homr_str = sprintf("%.3f", $prop_hom_ref);
         my $prop_het_str = sprintf("%.3f", $prop_het);
         my $prop_homa_str = sprintf("%.3f", $prop_hom_alt);
+        my $maf_str = sprintf("%.3f", $maf);
         
         my $temp_count = ( $freq_threshold/100.0 ) * $gt_size * 1.0;
         #$freq_threshold = ( $temp_count/$gt_size ) * 1.0;
@@ -391,20 +451,36 @@ sub print_info
             # TO-DO
             my ($snpeff_type, $snpeff_gene, $snpeff_aa_change) = get_snpEffannotations($x);
             # TO-DO ADD 
-            my $rmsk = bed_annotate($$x{CHROM},$$x{POS}-1,$$x{POS}, 0);
+            my $rmsk = bed_annotate($$x{CHROM},$$x{POS}-1,$$x{POS}, 0); # RMSK
             $rmsk =~ s/\;$//g;
             #my $rmsk = ".";
             #my $gwas = bed_annotate($$x{CHROM},$$x{POS}-1,$$x{POS}, 1);
-            my $cpg = bed_annotate_cpg($$x{CHROM},$$x{POS}-1,$$x{POS}, 1);
-            my $clinvar = bed_annotate($$x{CHROM},$$x{POS},$$x{POS}+1, 2);
-            my $gwascatalog = bed_annotate_gwascatalog($$x{CHROM},$$x{POS},$$x{POS}+1, 3);
+            my $cpg = bed_annotate_cpg($$x{CHROM},$$x{POS}-1,$$x{POS}, 1); # CPG
+            my $clinvar = bed_annotate($$x{CHROM},$$x{POS},$$x{POS}+1, 2); # CLINVAR
+            my $gwascatalog = bed_annotate_gwascatalog($$x{CHROM},$$x{POS},$$x{POS}+1, 3); # GWAS
+            
+            # ENCODE 0-based
             #my $encode_tfbs = bed_annotate_tfbs($$x{CHROM},$$x{POS}-1,$$x{POS}, 5);
-            my $encode_tfbs = bed_annotate_tfbs($$x{CHROM},$$x{POS},$$x{POS}+1, File::Spec->rel2abs($annotation_beds[4]));
+            my $encode_tfbs = bed_annotate_tfbs($$x{CHROM},$$x{POS}-1,$$x{POS}, File::Spec->rel2abs($annotation_beds[4])); # TFBS
+            #my $encode_tfbs = bed_annotate_tfbs($$x{CHROM},$$x{POS},$$x{POS}+1, File::Spec->rel2abs($annotation_beds[4])); # TFBS
             $encode_tfbs =~ s/^\;//g;
-            my $encode_dnase = bed_annotate($$x{CHROM},$$x{POS},$$x{POS}+1, 5);
-            my $polyphen_chr = $$x{CHROM};
-            $polyphen_chr =~ s/^chr//g;
-            my $polyphen = bed_annotate_polyphen($polyphen_chr,$$x{POS},$$x{POS}+1, File::Spec->rel2abs($annotation_beds[6]), $$x{REF}, $alt);
+            #my $encode_dnase = bed_annotate($$x{CHROM},$$x{POS},$$x{POS}+1, 5);
+            my $encode_dnase = bed_annotate($$x{CHROM},$$x{POS}-1,$$x{POS}, 5);
+           
+            #my $polyphen_chr = $$x{CHROM};
+            #$polyphen_chr =~ s/^chr//g;
+            my $polyphen = bed_annotate_polyphen($$x{CHROM},$$x{POS},$$x{POS}+1, File::Spec->rel2abs($annotation_beds[6]), $$x{REF}, $alt);
+            
+            #my $gerpelement = bed_annotate($$x{CHROM},$$x{POS},$$x{POS}+1, 8); # GERP ELEMENTS
+            my $gerpelement = bed_annotate($$x{CHROM},$$x{POS}-1,$$x{POS}, 8); # GERP ELEMENTS
+            
+            my $ncrna = bed_annotate($$x{CHROM},$$x{POS},$$x{POS}+1, 9); # ncRNA + p_genes
+            my $ncsensitive = bed_annotate($$x{CHROM},$$x{POS},$$x{POS}+1, 10); # ncRNA + p_genes
+            # CADD
+            #my $cadd = bed_annotate($$x{CHROM},$$x{POS},$$x{POS}+1, 11); # cadd score
+            my $cadd = bed_annotate_cadd($$x{CHROM},$$x{POS},$$x{POS}+1, File::Spec->rel2abs($annotation_beds[11]), $$x{REF}, $alt); # cadd score
+            
+            # data/hg19.funseq.nc_sensitive.bed.gz
             
             # check gene name from several sources
             if($fun_gene eq ".")
@@ -415,67 +491,90 @@ sub print_info
             {
                 $info_string = $fun_gene;
             }
+
+            if ($info_string eq "."){
+                $info_string = bed_annotate($$x{CHROM},$$x{POS},$$x{POS}+1, 12);
+                if($info_string ne "."){
+                    $info_string = $info_string."(p)";
+                }
+            }
             
-            #my $info_string = "$gene_info[0]|$snpeff_gene|$fun_gene";
-            #
-            #
-		    $return_info = "$$x{ID}\t$$x{CHROM}\t$$x{POS}\t$$x{REF}\t$alt";
+            $return_info = "$$x{ID}\t$$x{CHROM}\t$$x{POS}\t$$x{REF}\t$alt";
             $return_info = $return_info."\t$info_string";
+            $return_info = $return_info."\t$snpeff_aa_change";
+
 		    $return_info = $return_info."\t$snpeff_type";
-		    $return_info = $return_info."\t$fun_network";
-            
-            #$return_info = $return_info."\t$fun_tfp";
-		    $return_info = $return_info."\t$encode_tfbs";
 		    
-            #$return_info = $return_info."\t$fun_dnase";
+            $return_info = $return_info."\t$cadd";
+		    $return_info = $return_info."\t$ncsensitive";
+
+            $return_info = $return_info."\t$polyphen";
+            $return_info = $return_info."\t$gerpelement";
+		    
+            # $return_info = $return_info."\t$fun_network";
+            
+		    $return_info = $return_info."\t$encode_tfbs";
             $return_info = $return_info."\t$encode_dnase";
 		    
             if($getseq eq "T") { $return_info = $return_info."\t$fasta_str"; }
-		    $return_info = $return_info."\t$gene_clndbn:$clinvar";
-		    $return_info = $return_info."\t$snpeff_aa_change";
-		    $return_info = $return_info."\t$phastcons";
-		    $return_info = $return_info."\t$rmsk";
-		    $return_info = $return_info."\t$cpg";
+		    
+            $return_info = $return_info."\t$cpg";
             $return_info = $return_info."\t$gwascatalog";
+		    $return_info = $return_info."\t$rmsk";
             #$return_info = $return_info."\t$gwas:$gwascatalog";
-            $return_info = $return_info."\t$polyphen";
-		    $return_info = $return_info."\t$prop_homr_str";
-		    $return_info = $return_info."\t$prop_het_str";
+            #$return_info = $return_info."\t$polyphen";
+            $return_info = $return_info."\t$ncrna";
+            #$return_info = $return_info."\t$gene_clndbn:$clinvar";
+            $return_info = $return_info."\t$clinvar";
+            
+            $return_info = $return_info."\t$maf_str";
+            $return_info = $return_info."\t$prop_homr_str";
+            $return_info = $return_info."\t$prop_het_str";
             $return_info = $return_info."\t$prop_homa_str";
-            if($highlight eq "T") { $return_info = $return_info."\t*"; } else { $return_info = $return_info."\t."; }
+            
+            #if($highlight eq "T") { $return_info = $return_info."\t*"; } else { $return_info = $return_info."\t."; }
             $return_info = $return_info."$gt_string";
             $return_info = $return_info."\n";
+            
+            #'''
+            #my $info_string = "$gene_info[0]|$snpeff_gene|$fun_gene";
             #
-            ##print OUTTAB "$$x{ID}\t$$x{CHROM}\t$$x{POS}\t$$x{REF}\t$alt";
-            ###print OUTTAB "\t$gt_counts";
-            ###print OUTTAB "\t$gt_freq";
-            ##print OUTTAB "\t$info_string";
+            #
+            #$return_info = "$$x{ID}\t$$x{CHROM}\t$$x{POS}\t$$x{REF}\t$alt";
+            #$return_info = $return_info."\t$info_string";
+            #$return_info = $return_info."\t$snpeff_type";
+		    
+            #$return_info = $return_info."\t$cadd";
+            #$return_info = $return_info."\t$ncsensitive";
+		    
+            #$return_info = $return_info."\t$fun_network";
             
-            ###BUG ISSUE #3 print OUTTAB "\t$fun_type:";
-            ##print "\t$snpeff_type";
+            ##$return_info = $return_info."\t$fun_tfp";
+            #$return_info = $return_info."\t$encode_tfbs";
+		    
+            ##$return_info = $return_info."\t$fun_dnase";
+            #$return_info = $return_info."\t$encode_dnase";
+		    
+            #if($getseq eq "T") { $return_info = $return_info."\t$fasta_str"; }
+            #$return_info = $return_info."\t$gene_clndbn:$clinvar";
+            #$return_info = $return_info."\t$snpeff_aa_change";
+            #$return_info = $return_info."\t$gerpelement";
+            #$return_info = $return_info."\t$rmsk";
+            #$return_info = $return_info."\t$cpg";
+            #$return_info = $return_info."\t$gwascatalog";
+            ##$return_info = $return_info."\t$gwas:$gwascatalog";
+            #$return_info = $return_info."\t$polyphen";
+            #$return_info = $return_info."\t$ncrna";
             
-            ##print OUTTAB "\t$fun_network";
-            ##print OUTTAB "\t$fun_tfp";
-            ##print OUTTAB "\t$fun_dnase";
-            ##if($getseq eq "T") { print OUTTAB "\t$fasta_str"; }
-            ##print OUTTAB "\t$gene_clndbn:$clinvar";
-            ###print OUTTAB ",$snpeff_gene";
-            ##print OUTTAB "\t$snpeff_aa_change";
-            ##print OUTTAB "\t$phastcons";
-            ##print OUTTAB "\t$rmsk";
-            ##print OUTTAB "\t$cpg";
+            #$return_info = $return_info."\t$maf_str";
+            #$return_info = $return_info."\t$prop_homr_str";
+            #$return_info = $return_info."\t$prop_het_str";
+            #$return_info = $return_info."\t$prop_homa_str";
             
-            ###print OUTTAB "\t$gwas";
-            ##print OUTTAB "\t$gwas:$gwascatalog";
-            
-            ##print OUTTAB "\t$prop_homr_str";
-            ##print OUTTAB "\t$prop_het_str";
-            ##print OUTTAB "\t$prop_homa_str";
-            ##if($highlight eq "T") { print OUTTAB "\t*"; } else { print OUTTAB "\t."; }
-            ##print OUTTAB "$gt_string";
-            ###print OUTTAB "\t$snpeff_gene";
-            ###print OUTTAB "\t$gt_array[3]";
-            ##print OUTTAB "\n";
+            #if($highlight eq "T") { $return_info = $return_info."\t*"; } else { $return_info = $return_info."\t."; }
+            #$return_info = $return_info."$gt_string";
+            #$return_info = $return_info."\n";
+            #'''
         }
     }
     #close OUTTAB;
