@@ -18,8 +18,11 @@ use Exporter qw(import);
 use File::Basename qw(dirname);
 use Cwd qw(abs_path);
 use lib dirname(dirname abs_path $0) . '/lib';
-use Var::Tab qw( get_gene_counts get_ann bed_annotate_cpg bed_annotate_tfbs bed_annotate_polyphen bed_annotate_cadd bed_annotate_gwascatalog );
+use Var::Tab qw( get_gene_counts get_ann bed_annotate_cpg bed_annotate_tfbs 
+    bed_annotate_polyphen bed_annotate_cadd bed_annotate_gwascatalog 
+    bed_annotate_hapmap get_effect_type_region get_variant_contingency_table);
 use Misc::Calc qw( add multiply percent_to_count_threshold maf_filter );
+use Misc::PrintFile qw(print_to_file print_to_var_type);
 
 use strict;
 #use warnings;
@@ -40,40 +43,17 @@ my $index = 0;
 my @annotation_beds = ();
 if ( exists($$opts{annotate}) )
 {
-    while (<DBCONFIG>) {
-        chomp;
-        my @dbconfig_temp = split(' ', $_);
-        $annotation_beds[$index] = @dbconfig_temp[2];
-        $tabix[$index] = Tabix->new('-data' => $annotation_beds[$index]);
-        $index++;
-        #print "$_\n";
+    while (my $line = <DBCONFIG>) {
+        chomp($line);
+        if($line =~ m/^\d/) {
+            #print $line."\n";
+            my @dbconfig_temp = split(' ', $line);
+            $annotation_beds[$index] = @dbconfig_temp[2];
+            $tabix[$index] = Tabix->new('-data' => $annotation_beds[$index]);
+            $index++;
+            #print "$_\n";
+        }
     }
-    #exit(0);
-
-    #'''
-    #@annotation_beds = split(',', $$opts{annotate});
-    #if ( -e $annotation_beds[0] && -e $annotation_beds[1] && -e $annotation_beds[2])
-    #{
-    #    $tabix[0] = Tabix->new('-data' => $annotation_beds[0]); # rmsk
-    #    $tabix[1] = Tabix->new('-data' => $annotation_beds[1]); # cpg
-    #    $tabix[2] = Tabix->new('-data' => $annotation_beds[2]); # clinvar
-    #    $tabix[3] = Tabix->new('-data' => $annotation_beds[3]); # gwas catalog
-    #    $tabix[4] = Tabix->new('-data' => $annotation_beds[4]); # tfbs
-    #    $tabix[5] = Tabix->new('-data' => $annotation_beds[5]); # dnase
-    #    $tabix[6] = Tabix->new('-data' => $annotation_beds[6]); # polyphen
-    #    $tabix[7] = Tabix->new('-data' => $annotation_beds[7]); # 1000 genome allele frequenciess
-    #    $tabix[8] = Tabix->new('-data' => $annotation_beds[8]); # gerp conservation
-    #    $tabix[9] = Tabix->new('-data' => $annotation_beds[9]); # ncrna + p_genes
-    #    $tabix[10] = Tabix->new('-data' => $annotation_beds[10]); # funseq nc_sensitive
-    #    $tabix[11] = Tabix->new('-data' => $annotation_beds[11]); # cadd phred score
-    #    $tabix[12] = Tabix->new('-data' => $annotation_beds[12]); # gencode promoter
-    #}
-    #else
-    #{
-    #    print "Error: annotaion file $annotation_beds[0] not found. Please check if the file is bgzipped and tabix index.\n";
-    #}
-    #'''
-    # bed_annotate($annotation_bed);
 }
 else 
 {
@@ -82,8 +62,11 @@ else
 }
 
 #convert_to_tab($opts, $slice_adaptor);
-convert_to_tab($opts);
-get_gene_counts($opts);
+
+#convert_to_tab($opts);
+#get_gene_counts($opts);
+get_variant_contingency_table($opts);
+
 #add(2,2);
 
 exit;
@@ -106,10 +89,12 @@ sub error
         "   -s, --sequence                   Print flanking sequence\n",
         "   -b, --bedfile                    Annotation file (bed file)\n",
         "   -a, --annotate                   Annotation file (bgzip bed + tabix indexed file)\n",
-        "   -n, --nondbsnp                   Keep only non-dbsnp variants (assumes the ID tag is populated in the vcf)\n",
+        "   -n, --nondbsnp                   Filter dbsnp variants (assumes the ID tag is populated in the vcf)\n",
+        #"   -hapmap,                         Filter HapMap variants (HapMap CEU variants)\n",
         "   -v, --input                      Input vcf file.\n",
         "   -m, --maf                        Minor allele frequency threhold.\n",
         "   -k, --maf1kg                     1000 genome minor allele frequency threshold.\n",
+        "   -r, --remove                     TODO: Remove variants seen in a population e.g. 1000 genome minor allele frequency threshold.\n",
         "   -o, --output                     Output prefix.\n",
         "\n";
 }
@@ -137,6 +122,7 @@ sub parse_params
         #if ( $arg eq '-a' || $arg eq '--annotate' ) { $$opts{annotate}=shift(@ARGV); next; }
         if ( $arg eq '-a' || $arg eq '--annotate' ) { $$opts{annotate}=1; next; }
         if ( $arg eq '-n' || $arg eq '--nondbsnp' ) { $$opts{nondbsnp}=1; next; }
+        if ( $arg eq '--hapmap' ) { $$opts{hapmap}=1; next; }
         if ( $arg eq '-v' || $arg eq '--input' ) { $$opts{input}=shift(@ARGV); next; }
         if ( $arg eq '-m' || $arg eq '--maf' ) { $$opts{maf}=shift(@ARGV); next; }
         if ( $arg eq '-k' || $arg eq '--maf1kg' ) { $$opts{maf1kg}=shift(@ARGV); next; }
@@ -157,7 +143,6 @@ sub parse_params
             'CC' => 'C',
             'TT' => 'T',
             'AA' => 'A',
-
             'GT' => 'K',
             'TG' => 'K',
             'AC' => 'M',
@@ -170,7 +155,6 @@ sub parse_params
             'TA' => 'W',
             'CT' => 'Y',
             'TC' => 'Y',
-
             '..' => '.',
         };
     }
@@ -246,9 +230,22 @@ sub convert_to_tab
     
     # output file names
     my $outputtab = $output.".tab";
+    my $snpoutputtab = $output.".snp.tab";
+    my $insoutputtab = $output.".ins.tab";
+    my $deloutputtab = $output.".del.tab";
+    my $otheroutputtab = $output.".other.tab";
     #my $outputburden = $output.".burden";
+    
     # OPEN OUTPUT FILE PREFIX.tab
-    open(OUTTAB, ">$outputtab") || die "Can't open the file: $outputtab: $!\n";
+    # open(OUTTAB, ">$outputtab") || die "Can't open the file: $outputtab: $!\n";
+    open my $OUTTAB, '>', $outputtab or die "...$!\n";
+    
+    # SNP INS DEL OTHER
+    open my $SNPOUTTAB, '>', $snpoutputtab or die "Could not open file $!\n";
+    open my $INSOUTTAB, '>', $insoutputtab or die "Could not open file $!\n";
+    open my $DELOUTTAB, '>', $deloutputtab or die "Could not open file $!\n";
+    open my $OTHEROUTTAB, '>', $otheroutputtab or die "Could not open file $!\n";
+
 
     #my $vcf = Vcf->new(fh=>\*STDIN);
     my $vcf = Vcf->new(file=>$input);
@@ -258,30 +255,31 @@ sub convert_to_tab
     my $total = 0;
     my $print_string = "";
     my @maf_output = ();
+    my $header = "";
 
     while (my $x=$vcf->next_data_hash())
     {
+        my $r = $$x{REF};
+        my $a = join("", @{$$x{ALT}});
+        #print $r."\t".$a."\n";
         $total++;
+
         # print Dumper($x);
         if ( !$header_printed ) 
         {
-            #print "#CHROM,POS,REF,ALT,ID,FREQ";
-            #print "dbSNP_ID\tChr\tPOS\tREF\tALT\tCount\tFreq\tGENE\tTYPE\tNETWORK\tTFP\tDNASE\tp_HET\tp_HOM";
-            #NO HET HOM percentage
-            #print "dbSNP_ID\tChr\tPOS\tREF\tALT\tCount\tFreq\tGENE\tTYPE\tNETWORK\tTFP\tDNASE";
-            #NO EARLY COUNTS
-            # ORG print OUTTAB "dbSNP_ID\tChr\tPOS\tREF\tALT\tGENE\tTYPE\tCADD\tFS_SENSITIVE\tNETWORK\tTF_binding_peak\tDNASE";
-            # ORG print OUTTAB "\tCLINICAL\tAA_CHANGE\tConservation\tRMSK\tCpG\tGWAS\tPOLYPHEN\tncRNA_p_gene\tMAF\tSampleFreq.HOM_REF\tSampleFreq.HET\tSampleFreq.HOM_ALT\tFS";
-            print OUTTAB "dbSNP_ID\tChr\tPOS\tREF\tALT\tGENE\tAA\tTYPE\tCADD\tFUNSEQ\tPOLY_SIFT\tCONS\tTFBS\tDNASE";
-            print OUTTAB "\tCpG\tGWAS\tRMSK\tncRNA_p-gene\tCLINICAL\tMAF\tSampleFreq.HOM_REF\tSampleFreq.HET\tSampleFreq.HOM_ALT\tFS";
+            $header = "dbSNP_ID\tChr\tPOS\tREF\tALT\tGENE\tAA\tTYPE\tREGION\tCADD\tFUNSEQ\tPOLY_SIFT\tCONS\tTFBS\tDNASE\tCpG\tGWAS\tRMSK\tncRNA_p-gene\tCLINICAL\tMAF\tSampleFreq.HOM_REF\tSampleFreq.HET\tSampleFreq.HOM_ALT";
+            # ADD FUNCTION TO PRINT TO FILE
+            print_to_file($OUTTAB, $header); print_to_file($SNPOUTTAB, $header); print_to_file($INSOUTTAB, $header);
+            print_to_file($DELOUTTAB, $header); print_to_file($OTHEROUTTAB, $header);
             
-
             if($getseq eq "T") { print OUTTAB "\tFASTA"; }
             for my $col (sort keys %{$$x{gtypes}})
             {
-                print OUTTAB "\t$col";
+                print_to_file($OUTTAB, "\t".$col); print_to_file($SNPOUTTAB, "\t".$col); print_to_file($INSOUTTAB, "\t".$col);
+                print_to_file($DELOUTTAB, "\t".$col); print_to_file($OTHEROUTTAB, "\t".$col);
             }
-            print OUTTAB "\n";
+            print_to_file($OUTTAB, "\n"); print_to_file($SNPOUTTAB, "\n"); print_to_file($INSOUTTAB, "\n");
+            print_to_file($DELOUTTAB, "\n"); print_to_file($OTHEROUTTAB, "\n");
 
             $header_printed = 1;
         }
@@ -292,40 +290,55 @@ sub convert_to_tab
             {         
                 # print_info($x, $freq_threshold, $getseq, $vcf, $output);
                 if( $$opts{maf1kg} ) {
+                    # get the ALT
+                    my $alt;
+                    for my $alt (@{$$x{ALT}}) {
+                        if ( $alt eq '.' ) { $alt=$$x{REF}; }
+                    }
                     @maf_output = maf_filter($$x{CHROM},$$x{POS},$$x{POS}+1,7,$$opts{maf1kg});
-                    if ( $maf_output[0] == 1 ) {
+                    my $hapmap = bed_annotate_hapmap($$x{CHROM},$$x{POS},$$x{POS}+1, 13, $$x{REF}, $alt, $$opts{maf1kg});
+                    # ONLY PRINT VARIANT TO OUTPUT IF 1KG MAF IS BELOW THRESHOLD OR NOT REPORTED IN THE BED FILE
+                    # ALSO ONLY PRINT THOSE VARIANTS WITH HAPMAP MAF > 0.05
+                    if ( $maf_output[0] == 1 && $hapmap == 0 ) {
                         $print_string = print_info($x, $freq_threshold, $getseq, $vcf, $output);
-                        print OUTTAB $print_string;
-                    } elsif ( $maf_output[0] == 2 ) {
+                        print_to_var_type($r, $a, $OUTTAB, $SNPOUTTAB, $INSOUTTAB, $DELOUTTAB, $OTHEROUTTAB, $print_string);
+                        
+                    } elsif ( $maf_output[0] == 2 && $hapmap == 0 ) {
                         $print_string = print_info($x, $freq_threshold, $getseq, $vcf, $output);
-                        print OUTTAB $print_string;
+                        print_to_var_type($r, $a, $OUTTAB, $SNPOUTTAB, $INSOUTTAB, $DELOUTTAB, $OTHEROUTTAB, $print_string);
                     }
                 } else {
                     $print_string = print_info($x, $freq_threshold, $getseq, $vcf, $output);
-                    print OUTTAB $print_string;
+                    print_to_var_type($r, $a, $OUTTAB, $SNPOUTTAB, $INSOUTTAB, $DELOUTTAB, $OTHEROUTTAB, $print_string);
                 }
             }
         }
         else
         {            
-            #print_info($x, $freq_threshold, $getseq, $vcf, $output);
             if( $$opts{maf1kg} ) {
                 @maf_output = maf_filter($$x{CHROM},$$x{POS},$$x{POS}+1,7,$$opts{maf1kg});
                 if ( $maf_output[0] == 1 ) {
                     $print_string = print_info($x, $freq_threshold, $getseq, $vcf, $output);
-                    print OUTTAB $print_string;
+                    #print OUTTAB $print_string;
+                    print_to_var_type($r, $a, $OUTTAB, $SNPOUTTAB, $INSOUTTAB, $DELOUTTAB, $OTHEROUTTAB, $print_string);
                 } elsif ( $maf_output[0] == 2 ) {
                     $print_string = print_info($x, $freq_threshold, $getseq, $vcf, $output);
-                    print OUTTAB $print_string;
+                    #print OUTTAB $print_string;
+                    print_to_var_type($r, $a, $OUTTAB, $SNPOUTTAB, $INSOUTTAB, $DELOUTTAB, $OTHEROUTTAB, $print_string);
                 }
             } else {
                 $print_string = print_info($x, $freq_threshold, $getseq, $vcf, $output);
-                print OUTTAB $print_string;
+                #print OUTTAB $print_string;
+                print_to_var_type($r, $a, $OUTTAB, $SNPOUTTAB, $INSOUTTAB, $DELOUTTAB, $OTHEROUTTAB, $print_string);
             }
         }
     }
-    print OUTTAB "Total = $total\n";
-    close OUTTAB;
+    #print OUTTAB "Total = $total\n";
+    close $OUTTAB;
+    close $SNPOUTTAB;
+    close $INSOUTTAB;
+    close $DELOUTTAB;
+    close $OTHEROUTTAB;
     $vcf->close();
 }
 
@@ -421,7 +434,7 @@ sub print_info
 
         #print " $gt_array[0] \t $gt_array[1] \t $gt_array[2] \t $gt_array[3] \t $gt_counts \t $temp_count \n";
         
-        #if( $gt_counts <= $temp_count )
+        #if( $gt_counts <= $temp_count )        
         if( ($gt_counts-$gt_array[3]) <= $temp_count )
         {
             # TODO: make the feature of getting flanking fasta sequences optional
@@ -450,6 +463,10 @@ sub print_info
             my $phastcons = get_annotations($x, "PhastCons");
             # TO-DO
             my ($snpeff_type, $snpeff_gene, $snpeff_aa_change) = get_snpEffannotations($x);
+
+            # 
+            my $snpeff_region = get_effect_type_region($snpeff_type);
+
             # TO-DO ADD 
             my $rmsk = bed_annotate($$x{CHROM},$$x{POS}-1,$$x{POS}, 0); # RMSK
             $rmsk =~ s/\;$//g;
@@ -478,7 +495,11 @@ sub print_info
             my $ncsensitive = bed_annotate($$x{CHROM},$$x{POS},$$x{POS}+1, 10); # ncRNA + p_genes
             # CADD
             #my $cadd = bed_annotate($$x{CHROM},$$x{POS},$$x{POS}+1, 11); # cadd score
-            my $cadd = bed_annotate_cadd($$x{CHROM},$$x{POS},$$x{POS}+1, File::Spec->rel2abs($annotation_beds[11]), $$x{REF}, $alt); # cadd score
+            my $cadd = bed_annotate_cadd($$x{CHROM},$$x{POS},$$x{POS}+1, File::Spec->rel2abs($annotation_beds[11]), $$x{REF}, $alt);
+            
+            # HapMap
+            #my $hapmap = bed_annotate_hapmap($$x{CHROM},$$x{POS}-1,$$x{POS}, 13, $$x{REF}, $alt);
+            #print "TEST = ".$hapmap."\n";
             
             # data/hg19.funseq.nc_sensitive.bed.gz
             
@@ -504,6 +525,7 @@ sub print_info
             $return_info = $return_info."\t$snpeff_aa_change";
 
 		    $return_info = $return_info."\t$snpeff_type";
+		    $return_info = $return_info."\t$snpeff_region";
 		    
             $return_info = $return_info."\t$cadd";
 		    $return_info = $return_info."\t$ncsensitive";
@@ -536,45 +558,6 @@ sub print_info
             $return_info = $return_info."$gt_string";
             $return_info = $return_info."\n";
             
-            #'''
-            #my $info_string = "$gene_info[0]|$snpeff_gene|$fun_gene";
-            #
-            #
-            #$return_info = "$$x{ID}\t$$x{CHROM}\t$$x{POS}\t$$x{REF}\t$alt";
-            #$return_info = $return_info."\t$info_string";
-            #$return_info = $return_info."\t$snpeff_type";
-		    
-            #$return_info = $return_info."\t$cadd";
-            #$return_info = $return_info."\t$ncsensitive";
-		    
-            #$return_info = $return_info."\t$fun_network";
-            
-            ##$return_info = $return_info."\t$fun_tfp";
-            #$return_info = $return_info."\t$encode_tfbs";
-		    
-            ##$return_info = $return_info."\t$fun_dnase";
-            #$return_info = $return_info."\t$encode_dnase";
-		    
-            #if($getseq eq "T") { $return_info = $return_info."\t$fasta_str"; }
-            #$return_info = $return_info."\t$gene_clndbn:$clinvar";
-            #$return_info = $return_info."\t$snpeff_aa_change";
-            #$return_info = $return_info."\t$gerpelement";
-            #$return_info = $return_info."\t$rmsk";
-            #$return_info = $return_info."\t$cpg";
-            #$return_info = $return_info."\t$gwascatalog";
-            ##$return_info = $return_info."\t$gwas:$gwascatalog";
-            #$return_info = $return_info."\t$polyphen";
-            #$return_info = $return_info."\t$ncrna";
-            
-            #$return_info = $return_info."\t$maf_str";
-            #$return_info = $return_info."\t$prop_homr_str";
-            #$return_info = $return_info."\t$prop_het_str";
-            #$return_info = $return_info."\t$prop_homa_str";
-            
-            #if($highlight eq "T") { $return_info = $return_info."\t*"; } else { $return_info = $return_info."\t."; }
-            #$return_info = $return_info."$gt_string";
-            #$return_info = $return_info."\n";
-            #'''
         }
     }
     #close OUTTAB;
@@ -584,132 +567,8 @@ sub print_info
 # PRINT HTML
 sub print_info_html
 {
-    my $x = shift;
-    my $freq_threshold = shift;
-    my $getseq = shift;
-    my $vcf = shift;
-    my $bed = shift;
-    my $slice_adaptor;
-    my $fasta_str;
-
-    my @pairs = $$x{ALT};
-    my $alt_str = join(', ', @pairs);
-    my $alt_len = scalar @{$$x{ALT}};
-    my $gt_size = keys(%{$$x{gtypes}});
-    
-    my %types;
-    for my $alt (@{$$x{ALT}})
-    {
-        if ( $alt eq '.' ) { $alt=$$x{REF}; }
-        
-        my $gt_counts = 0;
-        my $gt_het = 0;
-        my $gt_hom = 0;
-        my $gt_string = "";
-        my @gt_array = (0, 0, 0, 0); # hom_ref - het - hom_alt - sample count 
-        
-        for my $col (sort keys %{$$x{gtypes}})
-        {
-            $gt_counts++;
-            my ($al1,$sep,$al2) = exists($$x{gtypes}{$col}{GT}) ? $vcf->parse_alleles($x,$col) : ('.','/','.');
-            my $gt = $al1.'/'.$al2;
-            my ($current_gt, $gt_index) = get_gt_type($$x{gtypes}{$col}{GT});
-            
-            $gt_string = "$gt_string\t$current_gt";
-            
-            $gt_array[$gt_index]++;
-            
-
-            if($alt eq $al2)
-            {
-                if($$x{gtypes}{$col}{GT} eq "0/1")
-                {
-                     $gt_het++;
-                }
-                elsif($$x{gtypes}{$col}{GT} eq "1/1")
-                {
-                    $gt_hom++;
-                }
-            } else 
-            {
-            }
-        }
-        
-        my $prop_het = ( $gt_array[1]/$gt_counts ) * 1.0;
-        my $prop_hom_ref = ( $gt_array[0]/$gt_counts ) * 1.0;
-        my $prop_hom_alt = ( $gt_array[2]/$gt_counts ) * 1.0;        
-        my $prop_homr_str = sprintf("%.3f", $prop_hom_ref);
-        my $prop_het_str = sprintf("%.3f", $prop_het);
-        my $prop_homa_str = sprintf("%.3f", $prop_hom_alt);
-        
-        my $temp_count = ( $freq_threshold/100.0 ) * $gt_size * 1.0;
-        #$freq_threshold = ( $temp_count/$gt_size ) * 1.0;
-        my $gt_freq_temp = ( ( $gt_counts/$gt_size ) * 1.0 );
-        my $gt_freq = sprintf("%.3f", $gt_freq_temp);
-
-        #print " $gt_array[0] \t $gt_array[1] \t $gt_array[2] \t $gt_array[3] \t $gt_counts \t $temp_count \n";
-        
-        if( ($gt_counts-$gt_array[3]) <= $temp_count )
-        {
-            # TODO: make the feature of getting flanking fasta sequences optional
-            if ($getseq eq "T")
-            {
-                my $db = Bio::DB::Fasta->new('genome.fa');
-                my $slice = $db->seq($$x{CHROM}, $$x{POS}-60 => $$x{POS}+60);
-                my $seq_up = substr $slice, 0, 60;
-                my $seq_down = substr $slice, 61, 121;
-                $fasta_str = $seq_up."[".$$x{REF}."/".$alt."]".$seq_down;
-            }
-
-            my $info_string = "";
-            my ($fun_gene, $fun_type, $fun_network, $fun_tfp, $fun_dnase, $highlight) = parse_fun_bed($x);
-            
-            #other annotations
-            my @gene_info = split(':',get_annotations($x, "GENEINFO"));
-            my $snpeff_gene = get_annotations($x, "SNPEFF_GENE_NAME");
-            my $gene_clndbn = get_annotations($x, "CLNDBN");
-            my $aa_change = get_annotations($x, "SNPEFF_AMINO_ACID_CHANGE");
-            my $phastcons = get_annotations($x, "PhastCons");
-            my ($snpeff_type, $snpeff_gene, $snpeff_aa_change) = get_snpEffannotations($x);
-
-            # check gene name from several sources
-            if($fun_gene eq ".")
-            {
-                $info_string = $snpeff_gene;
-            }
-            else
-            {
-                $info_string = $fun_gene;
-            }
-            
-
-            print "$$x{ID}\t$$x{CHROM}\t$$x{POS}\t$$x{REF}\t$alt";
-            #print "\t$gt_counts";
-            #print "\t$gt_freq";
-            print "\t$info_string";
-            
-            print "\t$fun_type";
-            print ":$snpeff_type";
-            
-            print "\t$fun_network";
-            print "\t$fun_tfp";
-            print "\t$fun_dnase";
-            if($getseq eq "T") { print "\t$fasta_str"; }
-            print "\t$gene_clndbn";
-            #print ",$snpeff_gene";
-            print "\t$snpeff_aa_change";
-            print "\t$phastcons";
-            print "\t$prop_homr_str";
-            print "\t$prop_het_str";
-            print "\t$prop_homa_str";
-            if($highlight eq "T") { print "\t*"; } else { print "\t."; }
-            print "$gt_string";
-            #print "\t$snpeff_gene";
-            #print "\t$gt_array[3]";
-            print "\n";
-        }
-    }
-}
+    exit;
+} 
 
 # PARSE FUNSEQ OUTPUT IN BED FORMAT
 # TO-DO CHANGE TO TABIX 
@@ -924,4 +783,41 @@ sub bed_annotate
         }
     } 
 }
+
+# # CALL PRINT FUNCTION BASED ON REF AND ALT FORMS
+# sub print_to_var_type
+# {
+#     #print_to_var_type($r, $a, $OUTTAB, $SNPOUTTAB, $INSOUTTAB, $DELOUTTAB, $OTHEROUTTAB, $print_string);
+#     my $ref = shift;
+#     my $alt = shift;
+#     my $OUTTAB = shift;
+#     my $SNPOUTTAB = shift;
+#     my $INSOUTTAB = shift;
+#     my $DELOUTTAB = shift;
+#     my $OTHEROUTTAB = shift;
+#     my $print_string = shift;
+#     # print_to_file($OUTTAB, $print_string); if() { print_to_file($SNPOUTTAB, $print_string)}; print_to_file($INSOUTTAB, $print_string);
+#     # print_to_file($DELOUTTAB, $print_string); print_to_file($OTHEROUTTAB, $print_string);
+
+#     if( length($ref) == 1 && length($alt) == 1 ) {
+#         print_to_file($OUTTAB, $print_string); print_to_file($SNPOUTTAB, $print_string);
+#     } elsif( length($ref) == 1 && length($alt) > 1 ) {
+#         print_to_file($OUTTAB, $print_string); print_to_file($INSOUTTAB, $print_string);
+#     } elsif (length($ref) > 1 && length($alt) == 1 ) {
+#         print_to_file($OUTTAB, $print_string); print_to_file($DELOUTTAB, $print_string);
+#     } else {
+#         print_to_file($OUTTAB, $print_string); print_to_file($OTHEROUTTAB, $print_string);
+#     }
+# }
+
+# # PRINT STRING TO OUTPUT FILE
+# sub print_to_file
+# {
+#     my $fh = shift;
+#     my $str = shift;
+
+#     print $fh $str;
+# }
+
+
 

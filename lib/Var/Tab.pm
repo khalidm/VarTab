@@ -5,9 +5,15 @@ use Carp;
 use Data::Dumper;
 use Vcf;
 
+use Misc::PrintFile qw(print_to_file print_to_var_type_single print_to_var_type);
+use Misc::Calc qw( add multiply percent_to_count_threshold maf_filter );
+
 use Exporter qw(import);
- 
-our @EXPORT_OK = qw(get_gene_counts get_ann bed_annotate_cpg bed_annotate_tfbs bed_annotate_polyphen bed_annotate_cadd bed_annotate_gwascatalog);
+our @EXPORT_OK = qw(get_gene_counts get_ann bed_annotate_cpg bed_annotate_tfbs 
+    bed_annotate_polyphen bed_annotate_cadd bed_annotate_gwascatalog 
+    bed_annotate_hapmap get_effect_type_region get_variant_contingency_table);
+
+
 
 #
 # gene burden
@@ -124,6 +130,198 @@ sub get_gene_counts {
     #}
     close OUTBUR;
 }
+
+#
+# variant contingency table
+#
+sub get_variant_contingency_table {
+    my ($opts) = @_;
+    my $getseq = "F";
+
+    my $freq_threshold;
+    my $annotation_bed = "False";
+    
+    if ( exists($$opts{frequency}) )
+    {
+        $freq_threshold = $$opts{frequency} * 1.0;
+    }
+    else 
+    {
+        # set to default
+        $freq_threshold = 5.0;
+    }
+
+    # check print flanking sequence : requires genome fasta file
+    if (exists($$opts{sequence}))
+    {
+        $getseq = "T";
+    }
+   
+    my $iupac;
+    if ( $$opts{iupac} ) { $iupac=$$opts{iupac}; }
+
+    my $input = $$opts{input};
+    my $output = $$opts{output};
+    
+    # output file names
+    my $outputtab = $output.".matrix";
+        
+    # OPEN OUTPUT FILE PREFIX.tab
+    # open(OUTTAB, ">$outputtab") || die "Can't open the file: $outputtab: $!\n";
+    open my $OUTTAB, '>', $outputtab or die "...$!\n";
+    
+    #my $vcf = Vcf->new(fh=>\*STDIN);
+    my $vcf = Vcf->new(file=>$input);
+    $vcf->parse_header();
+
+    my $header_printed=0;
+    my $total = 0;
+    my $print_string = "";
+    my @maf_output = ();
+    my $header = "";
+
+    while (my $x=$vcf->next_data_hash())
+    {
+        my $r = $$x{REF};
+        my $a = join("", @{$$x{ALT}});
+        #print $r."\t".$a."\n";
+        $total++;
+
+        # print Dumper($x);
+        if ( !$header_printed ) 
+        {
+            # $header = "chr:pos\tREF\tALT\tGENE\tAA\tTYPE\tREGION\tCADD\tFUNSEQ\tPOLY_SIFT\tCONS\tTFBS\tDNASE\tCpG\tGWAS\tRMSK\tncRNA_p-gene\tCLINICAL\tMAF\tSampleFreq.HOM_REF\tSampleFreq.HET\tSampleFreq.HOM_ALT";
+            $header = "chr:pos";
+            # ADD FUNCTION TO PRINT TO FILE
+            print_to_file($OUTTAB, $header); 
+            
+            if($getseq eq "T") { print OUTTAB "\tFASTA"; }
+            for my $col (sort keys %{$$x{gtypes}})
+            {
+                print_to_file($OUTTAB, "\t".$col);
+            }
+            print_to_file($OUTTAB, "\n");
+
+            $header_printed = 1;
+        }
+
+        if( $$opts{nondbsnp} )
+        {
+            if($$x{ID} =~ m/^\./)
+            {         
+                # print_info($x, $freq_threshold, $getseq, $vcf, $output);
+                if( $$opts{maf1kg} ) {
+                    my $gt_string = "";
+                    # get the ALT
+                    my $alt;
+                    for my $alt (@{$$x{ALT}}) {
+                        if ( $alt eq '.' ) { $alt=$$x{REF}; }                        
+                        for my $col (sort keys %{$$x{gtypes}}){                            
+                            # my ($al1,$sep,$al2) = exists($$x{gtypes}{$col}{GT}) ? $vcf->parse_alleles($x,$col) : ('.','/','.');
+                            # my $gt = $al1.'/'.$al2;
+                            # my ($current_gt, $gt_index) = get_gt_type($$x{gtypes}{$col}{GT});
+                            # $gt_string = "$gt_string\t$current_gt";
+                            my $current_gt = $$x{gtypes}{$col}{GT};
+                            if($current_gt ne "."){
+                                $gt_string = "$gt_string\t1";
+                            } else {
+                                $gt_string = "$gt_string\t.";
+                            }
+                        }
+                    }
+                    @maf_output = maf_filter($$x{CHROM},$$x{POS},$$x{POS}+1,7,$$opts{maf1kg});
+                    my $hapmap = bed_annotate_hapmap($$x{CHROM},$$x{POS},$$x{POS}+1, 13, $$x{REF}, $alt, $$opts{maf1kg});
+                    # ONLY PRINT VARIANT TO OUTPUT IF 1KG MAF IS BELOW THRESHOLD OR NOT REPORTED IN THE BED FILE
+                    # ALSO ONLY PRINT THOSE VARIANTS WITH HAPMAP MAF > 0.05
+                    if ( $maf_output[0] == 1 && $hapmap == 0 ) {
+                        # $print_string = print_info($x, $freq_threshold, $getseq, $vcf, $output);
+                        $print_string = "$$x{CHROM}:$$x{POS}:$$x{ID}\t$gt_string\n";
+                        print_to_var_type_single($r, $a, $OUTTAB, $print_string);
+                        
+                    } elsif ( $maf_output[0] == 2 && $hapmap == 0 ) {
+                        # $print_string = print_info($x, $freq_threshold, $getseq, $vcf, $output);
+                        $print_string = "$$x{CHROM}:$$x{POS}:$$x{ID}\t$gt_string\n";
+                        print_to_var_type_single($r, $a, $OUTTAB, $print_string);
+                    }
+                } else {
+                    my $gt_string = "";
+                    # get the ALT
+                    my $alt;
+                    for my $alt (@{$$x{ALT}}) {
+                        if ( $alt eq '.' ) { $alt=$$x{REF}; }                        
+                        for my $col (sort keys %{$$x{gtypes}}){
+                            my $current_gt = $$x{gtypes}{$col}{GT};
+                            if($current_gt ne "."){
+                                $gt_string = "$gt_string\t1";
+                            } else {
+                                $gt_string = "$gt_string\t.";
+                            }
+                        }
+                    }
+                    $print_string = "$$x{CHROM}:$$x{POS}:$$x{ID}\t$gt_string\n";
+                    print_to_var_type_single($r, $a, $OUTTAB, $print_string);
+                }
+            }
+        } else {            
+            if( $$opts{maf1kg} ) {
+                # print_info($x, $freq_threshold, $getseq, $vcf, $output);
+                my $gt_string = "";
+                # get the ALT
+                my $alt;
+                for my $alt (@{$$x{ALT}}) {
+                    if ( $alt eq '.' ) { $alt=$$x{REF}; }                        
+                    for my $col (sort keys %{$$x{gtypes}}){                            
+                        my $current_gt = $$x{gtypes}{$col}{GT};
+                        if($current_gt ne "."){
+                            $gt_string = "$gt_string\t1";
+                        } else {
+                            $gt_string = "$gt_string\t.";
+                        }
+                    }
+                }
+                @maf_output = maf_filter($$x{CHROM},$$x{POS},$$x{POS}+1,7,$$opts{maf1kg});
+                my $hapmap = bed_annotate_hapmap($$x{CHROM},$$x{POS},$$x{POS}+1, 13, $$x{REF}, $alt, $$opts{maf1kg});
+                # ONLY PRINT VARIANT TO OUTPUT IF 1KG MAF IS BELOW THRESHOLD OR NOT REPORTED IN THE BED FILE
+                # ALSO ONLY PRINT THOSE VARIANTS WITH HAPMAP MAF > 0.05
+                if ( $maf_output[0] == 1 && $hapmap == 0 ) {
+                    # $print_string = print_info($x, $freq_threshold, $getseq, $vcf, $output);
+                    $print_string = "$$x{CHROM}:$$x{POS}:$$x{ID}\t$gt_string\n";
+                    print_to_var_type_single($r, $a, $OUTTAB, $print_string);
+                        
+                } elsif ( $maf_output[0] == 2 && $hapmap == 0 ) {
+                    # $print_string = print_info($x, $freq_threshold, $getseq, $vcf, $output);
+                    $print_string = "$$x{CHROM}:$$x{POS}:$$x{ID}\t$gt_string\n";
+                    print_to_var_type_single($r, $a, $OUTTAB, $print_string);
+                }
+            } else {
+                my $gt_string = "";
+                # get the ALT
+                my $alt;
+                for my $alt (@{$$x{ALT}}) {
+                    if ( $alt eq '.' ) { $alt=$$x{REF}; }                        
+                    for my $col (sort keys %{$$x{gtypes}}){
+                        # my ($al1,$sep,$al2) = exists($$x{gtypes}{$col}{GT}) ? $vcf->parse_alleles($x,$col) : ('.','/','.');
+                        # my $gt = $al1.'/'.$al2;
+                        # my ($current_gt, $gt_index) = get_gt_type($$x{gtypes}{$col}{GT});
+                        # $gt_string = "$gt_string\t$current_gt";
+                        my $current_gt = $$x{gtypes}{$col}{GT};
+                        if($current_gt ne "."){
+                            $gt_string = "$gt_string\t1";
+                        } else {
+                            $gt_string = "$gt_string\t.";
+                        }
+                    }
+                }
+                $print_string = "$$x{CHROM}:$$x{POS}:$$x{ID}\t$gt_string\n";
+                print_to_var_type_single($r, $a, $OUTTAB, $print_string);
+            }
+        }
+    }    
+    close $OUTTAB;    
+    $vcf->close();
+}
+
+
 
 sub get_ann
 {
@@ -435,6 +633,67 @@ sub bed_annotate_gwascatalog {
     #}
 }
 
+
+# get hapmap data
+sub bed_annotate_hapmap {
+    # my $annotation_tabix = shift;
+    my $chr = shift;
+    my $start = shift;
+    my $end = shift;
+    my $annotation_id = shift;
+    my $ref = shift;
+    my $alt = shift;
+    my $maf_filter = shift;
+    my @var = ();
+    my @var_array = ();
+    my @hapmap_temp = ();
+    my $hapmap = 0;
+    
+    @var = split('\n', $main::tabix[$annotation_id]->read($main::tabix[$annotation_id]->query( $chr, $start, $end)));
+
+    foreach my $snp (@var) {
+        @var_array = split('\t', $snp);
+        if (0+@var_array > 0 && $ref eq $var_array[3] && $alt eq $var_array[5] && $var_array[6] > $maf_filter) {
+            # @hapmap_temp = split(';', $var_array[3]);
+            # $hapmap = $hapmap_temp[0];        
+            $hapmap = 1;
+        }
+    }
+
+    return $hapmap;
+}
+
+my %region_hash = (
+    NONE => [ 'NONE', 'CHROMOSOME', 'CUSTOM', 'CDS', ],
+    INTERGENIC => [ 'INTERGENIC', 'INTERGENIC_CONSERVED', ],
+    UPSTREAM => [ 'UPSTREAM', ],
+    UTR_5_PRIME => [ 'UTR_5_PRIME', 'UTR_5_DELETED', 'UTR_5_GAINED' ],
+    SPLICE_SITE_ACCEPTOR => [ 'SPLICE_SITE_ACCEPTOR', ],    
+    SPLICE_SITE_DONOR => [ 'SPLICE_SITE_DONOR', ],    
+    SPLICE_SITE_REGION => [ 'SPLICE_SITE_REGION', ],
+    EXON => [ 'INTRAGENIC', 'START_LOST', 'SYNONYMOUS_START', 'NON_SYNONYMOUS_START', 'GENE', 'TRANSCRIPT', 'EXON', 'EXON_DELETED', 'NON_SYNONYMOUS_CODING', 'SYNONYMOUS_CODING', 'FRAME_SHIFT', 'CODON_CHANGE', 'CODON_INSERTION', 'CODON_CHANGE_PLUS_CODON_INSERTION', 'CODON_DELETION', 'CODON_CHANGE_PLUS_CODON_DELETION', 'STOP_GAINED', 'SYNONYMOUS_STOP', 'STOP_LOST', 'RARE_AMINO_ACID', ],
+    INTRON => [ 'INTRON', 'INTRON_CONSERVED', ],
+    UTR_3_PRIME => [ 'UTR_3_PRIME', 'UTR_3_DELETED', ],
+    DOWNSTREAM => [ 'DOWNSTREAM', ],
+    REGULATION => [ 'REGULATION', ],
+);
+
+
+# get snpEff Region from effect type
+sub get_effect_type_region {
+    my $type = shift;
+    my $region = ".";
+
+    foreach my $key (keys %region_hash) {
+        #print $key."\t";
+        foreach (@{$region_hash{$key}}) {
+            if($type eq $_){
+                $region = $key;
+            }
+        }
+    }
+    return $region;
+}
 
 1;
 
