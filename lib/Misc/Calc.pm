@@ -30,8 +30,7 @@ sub percent_to_count_threshold
     my $gt_freq_temp = ( ( $gt_counts/$gt_size ) * 1.0 );
     my $gt_freq = sprintf("%.3f", $gt_freq_temp);
 
-    return $gt_freq; 
-
+    return $gt_freq;
 }
 
 # filter 1kgp variants with maf

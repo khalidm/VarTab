@@ -165,11 +165,16 @@ sub get_variant_contingency_table {
     
     # output file names
     my $outputtab = $output.".matrix";
+    
+    # output array
+    # my @frame_events = (((1) x 10), ((1) x 10));
+    my @array = (0);
+    my @gt_array = (0);
         
     # OPEN OUTPUT FILE PREFIX.tab
     # open(OUTTAB, ">$outputtab") || die "Can't open the file: $outputtab: $!\n";
     open my $OUTTAB, '>', $outputtab or die "...$!\n";
-    
+   
     #my $vcf = Vcf->new(fh=>\*STDIN);
     my $vcf = Vcf->new(file=>$input);
     $vcf->parse_header();
@@ -178,7 +183,7 @@ sub get_variant_contingency_table {
     my $total = 0;
     my $print_string = "";
     my @maf_output = ();
-    my $header = "";
+    my $header = "";    
 
     while (my $x=$vcf->next_data_hash())
     {
@@ -191,7 +196,7 @@ sub get_variant_contingency_table {
         if ( !$header_printed ) 
         {
             # $header = "chr:pos\tREF\tALT\tGENE\tAA\tTYPE\tREGION\tCADD\tFUNSEQ\tPOLY_SIFT\tCONS\tTFBS\tDNASE\tCpG\tGWAS\tRMSK\tncRNA_p-gene\tCLINICAL\tMAF\tSampleFreq.HOM_REF\tSampleFreq.HET\tSampleFreq.HOM_ALT";
-            $header = "chr:pos";
+            $header = "chr:pos:id";
             # ADD FUNCTION TO PRINT TO FILE
             print_to_file($OUTTAB, $header); 
             
@@ -201,10 +206,10 @@ sub get_variant_contingency_table {
                 print_to_file($OUTTAB, "\t".$col);
             }
             print_to_file($OUTTAB, "\n");
-
             $header_printed = 1;
         }
 
+        # non dbsnp variants only
         if( $$opts{nondbsnp} )
         {
             if($$x{ID} =~ m/^\./)
@@ -262,65 +267,98 @@ sub get_variant_contingency_table {
                     print_to_var_type_single($r, $a, $OUTTAB, $print_string);
                 }
             }
-        } else {            
-            if( $$opts{maf1kg} ) {
-                # print_info($x, $freq_threshold, $getseq, $vcf, $output);
-                my $gt_string = "";
-                # get the ALT
-                my $alt;
-                for my $alt (@{$$x{ALT}}) {
-                    if ( $alt eq '.' ) { $alt=$$x{REF}; }                        
-                    for my $col (sort keys %{$$x{gtypes}}){                            
-                        my $current_gt = $$x{gtypes}{$col}{GT};
-                        if($current_gt ne "."){
-                            $gt_string = "$gt_string\t1";
-                        } else {
-                            $gt_string = "$gt_string\t.";
+        } else {
+            # if(@{$$x{ALT}} == 1 && length(@{$$x{ALT}}[0]) == 1) {
+            # if(@{$$x{ALT}} == 1) {
+                my $gt_counts = 0;
+                for my $col (sort keys %{$$x{gtypes}}) {
+                    # print $col."\t";
+                    $gt_counts++;               
+                }
+                # reset array
+                # @frame_events = ();
+                @gt_array = (0) * ($gt_counts + 1);
+
+                if( $$opts{maf1kg} ) {
+                    # print_info($x, $freq_threshold, $getseq, $vcf, $output);
+                    my $gt_string = "";
+                    # get the ALT
+                    my $alt;
+                    my $index = 1;  
+                    for my $alt (@{$$x{ALT}}) {
+                        if ( $alt eq '.' ) { $alt=$$x{REF}; }                        
+                        for my $col (sort keys %{$$x{gtypes}}){
+                            my $current_gt = $$x{gtypes}{$col}{GT};
+                            if($current_gt ne "."){
+                                $gt_string = "$gt_string\t1";
+                                # $frame_events[0][$index] = 1;
+                                $gt_array[$index] = 1;
+                            } else {
+                                $gt_string = "$gt_string\t.";
+                                # $frame_events[0][0] = 0;
+                                $gt_array[$index] = 0;
+                            }
+                            $index++;
+                        }
+                    }                    
+                    @maf_output = maf_filter($$x{CHROM},$$x{POS},$$x{POS}+1,7,$$opts{maf1kg});
+                    my $hapmap = bed_annotate_hapmap($$x{CHROM},$$x{POS},$$x{POS}+1, 13, $$x{REF}, $alt, $$opts{maf1kg});
+                    my $sum = 0;
+                    for(my $i = 1; $i < @gt_array; $i++) {
+                        $sum = $sum + $gt_array[$i];
+                    }
+                    $sum = ($sum/$gt_counts) * 100.0;
+                    #my $sum = eval join '+', splice(@gt_array,1);                    
+                    # ONLY PRINT VARIANT TO OUTPUT IF 1KG MAF IS BELOW THRESHOLD OR NOT REPORTED IN THE BED FILE
+                    # ALSO ONLY PRINT THOSE VARIANTS WITH HAPMAP MAF > 0.05                    
+                    if ( $maf_output[0] == 1 || $maf_output[0] == 2 || $hapmap == 1 ) {                        
+                        # $print_string = "$$x{CHROM}:$$x{POS}:$$x{ID}\t$gt_string\n";
+                        # $frame_events[0][0] = "$$x{CHROM}:$$x{POS}:$$x{ID}";
+                        # DEBUG $gt_array[0] = "$$x{CHROM}:$$x{POS}:$$x{ID}:$sum:$gt_counts:$freq_threshold";
+                        $gt_array[0] = "$$x{CHROM}:$$x{POS}:$$x{ID}";
+                        # Onyl print if
+                        if( length($r) == 1 && length($a) == 1 && $sum < $freq_threshold) {
+                            # print_to_var_type_single($r, $a, $OUTTAB, $print_string);
+                            print $OUTTAB join(",", @gt_array);
+                            # print $OUTTAB " ";
+                            # print $OUTTAB ;
+                            print $OUTTAB "\n";
                         }
                     }
-                }
-                @maf_output = maf_filter($$x{CHROM},$$x{POS},$$x{POS}+1,7,$$opts{maf1kg});
-                my $hapmap = bed_annotate_hapmap($$x{CHROM},$$x{POS},$$x{POS}+1, 13, $$x{REF}, $alt, $$opts{maf1kg});
-                # ONLY PRINT VARIANT TO OUTPUT IF 1KG MAF IS BELOW THRESHOLD OR NOT REPORTED IN THE BED FILE
-                # ALSO ONLY PRINT THOSE VARIANTS WITH HAPMAP MAF > 0.05
-                if ( $maf_output[0] == 1 && $hapmap == 0 ) {
-                    # $print_string = print_info($x, $freq_threshold, $getseq, $vcf, $output);
-                    $print_string = "$$x{CHROM}:$$x{POS}:$$x{ID}\t$gt_string\n";
-                    print_to_var_type_single($r, $a, $OUTTAB, $print_string);
-                        
-                } elsif ( $maf_output[0] == 2 && $hapmap == 0 ) {
-                    # $print_string = print_info($x, $freq_threshold, $getseq, $vcf, $output);
-                    $print_string = "$$x{CHROM}:$$x{POS}:$$x{ID}\t$gt_string\n";
-                    print_to_var_type_single($r, $a, $OUTTAB, $print_string);
-                }
-            } else {
-                my $gt_string = "";
-                # get the ALT
-                my $alt;
-                for my $alt (@{$$x{ALT}}) {
-                    if ( $alt eq '.' ) { $alt=$$x{REF}; }                        
-                    for my $col (sort keys %{$$x{gtypes}}){
-                        # my ($al1,$sep,$al2) = exists($$x{gtypes}{$col}{GT}) ? $vcf->parse_alleles($x,$col) : ('.','/','.');
-                        # my $gt = $al1.'/'.$al2;
-                        # my ($current_gt, $gt_index) = get_gt_type($$x{gtypes}{$col}{GT});
-                        # $gt_string = "$gt_string\t$current_gt";
-                        my $current_gt = $$x{gtypes}{$col}{GT};
-                        if($current_gt ne "."){
-                            $gt_string = "$gt_string\t1";
-                        } else {
-                            $gt_string = "$gt_string\t.";
+                    #elsif ( $maf_output[0] == 2 && $hapmap == 0 ) {
+                    #     # $print_string = print_info($x, $freq_threshold, $getseq, $vcf, $output);
+                    #     $print_string = "-$$x{CHROM}:$$x{POS}:$$x{ID}\t$gt_string\n";
+                    #     print_to_var_type_single($r, $a, $OUTTAB, $print_string);
+                    # }
+                } else {
+                    my $gt_string = "";
+                    # get the ALT
+                    my $alt;
+                    for my $alt (@{$$x{ALT}}) {
+                        if ( $alt eq '.' ) { $alt=$$x{REF}; }                        
+                        for my $col (sort keys %{$$x{gtypes}}){
+                            # my ($al1,$sep,$al2) = exists($$x{gtypes}{$col}{GT}) ? $vcf->parse_alleles($x,$col) : ('.','/','.');
+                            # my $gt = $al1.'/'.$al2;
+                            # my ($current_gt, $gt_index) = get_gt_type($$x{gtypes}{$col}{GT});
+                            # $gt_string = "$gt_string\t$current_gt";
+                            my $current_gt = $$x{gtypes}{$col}{GT};
+                            if($current_gt ne "."){
+                                $gt_string = "$gt_string\t1";
+                            } else {
+                                $gt_string = "$gt_string\t.";
+                            }
                         }
                     }
+                    $print_string = "-$$x{CHROM}:$$x{POS}:$$x{ID}\t$gt_string\n";
+                    print_to_var_type_single($r, $a, $OUTTAB, $print_string);
                 }
-                $print_string = "$$x{CHROM}:$$x{POS}:$$x{ID}\t$gt_string\n";
-                print_to_var_type_single($r, $a, $OUTTAB, $print_string);
-            }
+            # }
         }
-    }    
+    }
+    print $total."\n";    
     close $OUTTAB;    
     $vcf->close();
 }
-
 
 
 sub get_ann
@@ -653,13 +691,12 @@ sub bed_annotate_hapmap {
 
     foreach my $snp (@var) {
         @var_array = split('\t', $snp);
-        if (0+@var_array > 0 && $ref eq $var_array[3] && $alt eq $var_array[5] && $var_array[6] > $maf_filter) {
+        if (0+@var_array > 0 && $ref eq $var_array[3] && $alt eq $var_array[5] && $var_array[6] <= $maf_filter) {
             # @hapmap_temp = split(';', $var_array[3]);
             # $hapmap = $hapmap_temp[0];        
             $hapmap = 1;
         }
     }
-
     return $hapmap;
 }
 
