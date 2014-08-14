@@ -168,7 +168,7 @@ sub get_variant_contingency_table {
     
     # output array
     # my @frame_events = (((1) x 10), ((1) x 10));
-    my @array = (0);
+    my @arr;    
     my @gt_array = (0);
         
     # OPEN OUTPUT FILE PREFIX.tab
@@ -178,6 +178,7 @@ sub get_variant_contingency_table {
     #my $vcf = Vcf->new(fh=>\*STDIN);
     my $vcf = Vcf->new(file=>$input);
     $vcf->parse_header();
+    # print length($vcf);
 
     my $header_printed=0;
     my $total = 0;
@@ -194,19 +195,31 @@ sub get_variant_contingency_table {
 
         # print Dumper($x);
         if ( !$header_printed ) 
-        {
+        {        
+            my $gt_counts = 0;
+            for my $col (sort keys %{$$x{gtypes}}) {
+                # print $col."\t";
+                $gt_counts++;               
+            }    
+            @gt_array = (0) * ($gt_counts + 1);
             # $header = "chr:pos\tREF\tALT\tGENE\tAA\tTYPE\tREGION\tCADD\tFUNSEQ\tPOLY_SIFT\tCONS\tTFBS\tDNASE\tCpG\tGWAS\tRMSK\tncRNA_p-gene\tCLINICAL\tMAF\tSampleFreq.HOM_REF\tSampleFreq.HET\tSampleFreq.HOM_ALT";
             $header = "chr:pos:id";
+            $gt_array[0] = $header;
+            
             # ADD FUNCTION TO PRINT TO FILE
             print_to_file($OUTTAB, $header); 
             
             if($getseq eq "T") { print OUTTAB "\tFASTA"; }
+            my $index = 1;
             for my $col (sort keys %{$$x{gtypes}})
             {
+                $gt_array[$index] = $col;
                 print_to_file($OUTTAB, "\t".$col);
             }
             print_to_file($OUTTAB, "\n");
+            
             $header_printed = 1;
+            push @arr, @gt_array;
         }
 
         # non dbsnp variants only
@@ -318,6 +331,7 @@ sub get_variant_contingency_table {
                         $gt_array[0] = "$$x{CHROM}:$$x{POS}:$$x{ID}";
                         # Onyl print if
                         if( length($r) == 1 && length($a) == 1 && $sum < $freq_threshold) {
+                            push @arr, @gt_array;
                             # print_to_var_type_single($r, $a, $OUTTAB, $print_string);
                             print $OUTTAB join(",", @gt_array);
                             # print $OUTTAB " ";
