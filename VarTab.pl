@@ -10,6 +10,14 @@ use Bio::Perl;
 use Bio::DB::Fasta;
 use JSON;
 use Data::Dumper;
+use Carp;
+use Tabix;
+
+use Exporter qw(import);
+use File::Basename qw(dirname);
+use Cwd qw(abs_path);
+use lib dirname(dirname abs_path $0) . './lib';
+use Var::Tab qw(add);
 
 use strict;
 #use warnings;
@@ -18,8 +26,33 @@ use Vcf;
 
 my $opts = parse_params();
 our %bedhash = {};
+our @tabix;
 
 bed_to_hash($opts);
+
+my @annotation_beds = ();
+if ( exists($$opts{annotate}) )
+{
+    @annotation_beds = split(',', $$opts{annotate});
+    if ( -e $annotation_beds[0] && -e $annotation_beds[1] && -e $annotation_beds[2])
+    {
+        $tabix[0] = Tabix->new('-data' => $annotation_beds[0]);
+        $tabix[1] = Tabix->new('-data' => $annotation_beds[1]);
+        $tabix[2] = Tabix->new('-data' => $annotation_beds[2]);
+        $tabix[3] = Tabix->new('-data' => $annotation_beds[3]);
+        #$tabix[4] = Tabix->new('-data' => $annotation_beds[4]);
+    }
+    else
+    {
+        print "Error: annotaion file $annotation_beds[0] not found. Please check if the file is bgzipped and tabix index.\n";
+    }
+    # bed_annotate($annotation_bed);
+}
+else 
+{
+    # set to default
+    # $annotation_beds = "False";
+}
 
 #convert_to_tab($opts, $slice_adaptor);
 convert_to_tab($opts);
@@ -43,6 +76,7 @@ sub error
         "   -f, --frequency                  Sample frequency threshold\n",
         "   -s, --sequence                   Print flanking sequence\n",
         "   -b, --bedfile                    Annotation file (bed file)\n",
+        "   -a, --annotate                   Annotation file (bgzip bed + tabix indexed file)\n",
         "   -n, --nondbsnp                   Keep only non-dbsnp variants (assumes the ID tag is populated in the vcf)\n",
         "\n";
 }
@@ -64,6 +98,7 @@ sub parse_params
         if ( $arg eq '-f' || $arg eq '--frequency' ) { $$opts{frequency}=shift(@ARGV); next; }
         if ( $arg eq '-s' || $arg eq '--sequence' ) { $$opts{sequence}=shift(@ARGV); next; }
         if ( $arg eq '-b' || $arg eq '--bedfile' ) { $$opts{bedfile}=shift(@ARGV); next; }
+        if ( $arg eq '-a' || $arg eq '--annotate' ) { $$opts{annotate}=shift(@ARGV); next; }
         if ( $arg eq '-n' || $arg eq '--nondbsnp' ) { $$opts{nondbsnp}=1; next; }
         error("Unknown parameter \"$arg\". Run -h for help.\n");
     }
@@ -145,7 +180,7 @@ sub convert_to_tab
     my $getseq = "F";
 
     my $freq_threshold;
-    #my $annotation_bed = "FALSE";
+    my $annotation_bed = "False";
     
     if ( exists($$opts{frequency}) )
     {
@@ -157,23 +192,12 @@ sub convert_to_tab
         $freq_threshold = 5.0;
     }
 
+    # check print flanking sequence : requires genome fasta file
     if (exists($$opts{sequence}))
     {
-        #my $reg = 'Bio::EnsEMBL::Registry';
-        #$reg->load_registry_from_db(
-        #    -host => 'ensembldb.ensembl.org',
-        #    -user => 'anonymous'
-        #);
-        #my $slice_adaptor = $reg->get_adaptor( 'human', 'core', 'slice');
         $getseq = "T";
     }
-    
-    #if ($$opts{frequency} ) { $freq_threshold=$$opts{frequency};};
-    #if ( exists($$opts{bedfile}) ) 
-    #{
-    #    $annotation_bed = $$opts{bedfile};
-    #}
-
+   
     my $iupac;
     if ( $$opts{iupac} ) { $iupac=$$opts{iupac}; }
 
@@ -195,7 +219,7 @@ sub convert_to_tab
             #print "dbSNP_ID\tChr\tPOS\tREF\tALT\tCount\tFreq\tGENE\tTYPE\tNETWORK\tTFP\tDNASE";
             #NO EARLY COUNTS
             print "dbSNP_ID\tChr\tPOS\tREF\tALT\tGENE\tTYPE\tNETWORK\tTF_binding_peak\tDNASE";
-            print "\tCLINICAL\tAA_CHANGE\tConservation\tSampleFreq.HOM_REF\tSampleFreq.HET\tSampleFreq.HOM_ALT\tFS";
+            print "\tCLINICAL\tAA_CHANGE\tConservation\tRMSK\tCpG\tGWAS\tSampleFreq.HOM_REF\tSampleFreq.HET\tSampleFreq.HOM_ALT\tFS";
             if($getseq eq "T") { print "\tFASTA"; }
             for my $col (sort keys %{$$x{gtypes}})
             {
@@ -209,14 +233,12 @@ sub convert_to_tab
         if( $$opts{nondbsnp} )
         {
             if($$x{ID} =~ m/^\./)
-            {
-                #print_info($x, $freq_threshold, $slice_adaptor, $vcf);
+            {         
                 print_info($x, $freq_threshold, $getseq, $vcf);
             }
         }
         else
-        {
-            #print_info($x, $freq_threshold, $slice_adaptor, $vcf);
+        {            
             print_info($x, $freq_threshold, $getseq, $vcf);
         }
     }
@@ -230,6 +252,7 @@ sub print_info
     my $getseq = shift;
     my $vcf = shift;
     my $bed = shift;
+    my $tabix = shift;
     my $slice_adaptor;
     my $fasta_str;
 
@@ -243,7 +266,6 @@ sub print_info
         #);
         #$slice_adaptor = $reg->get_adaptor( 'human', 'core', 'slice');
     }
-
 
     my @pairs = $$x{ALT};
     my $alt_str = join(', ', @pairs);
@@ -271,23 +293,9 @@ sub print_info
             $gt_string = "$gt_string\t$current_gt";
             
             $gt_array[$gt_index]++;
-            
-
-            #$gt_string = "$gt_string\t$col;$gt;$current_gt\t";            
-            #$gt_string = $gt.";";
-            #if ( $iupac )
-            #{
-            #    if ( !exists($$iupac{$gt}) ) { error(qq[Unknown IUPAC code for "$al1$sep$al2" .. $$x{CHROM}:$$x{POS} $col\n]); }
-            #           $gt = $$iupac{$gt};
-            #}
-                  
+                             
             if($alt eq $al2)
             {
-                #print "\t".$gt;
-                #print "\t".$col;
-                #$gt_string = "$gt_string\t$col";
-                #$gt_string = "$gt_string\t$col".$$x{gtypes}{$col}{GT};
-                #$$gt_string = "$$x{POS}\t";
                 if($$x{gtypes}{$col}{GT} eq "0/1")
                 {
                      $gt_het++;
@@ -303,15 +311,6 @@ sub print_info
                 #$gt_string = "$gt_string\t.";
             }
         }
-        
-        #if( $gt_counts == 0 )
-        #{
-        #    next;
-        #}
-        #my $prop_het = ( $gt_het/$gt_counts ) * 1.0;
-        #my $prop_hom = ( $gt_hom/$gt_counts ) * 1.0;
-        #my $gt_het_str = sprintf("%.3f", $prop_het);
-        #my $gt_hom_str = sprintf("%.3f", $prop_hom);
 
         my $prop_het = ( $gt_array[1]/$gt_counts ) * 1.0;
         my $prop_hom_ref = ( $gt_array[0]/$gt_counts ) * 1.0;
@@ -332,12 +331,7 @@ sub print_info
         {
             # TODO: make the feature of getting flanking fasta sequences optional
             if ($getseq eq "T")
-            {
-                #my $slice = $slice_adaptor->fetch_by_region('chromosome', $$x{CHROM}, $$x{POS}-60, $$x{POS}+60);
-                #my $seq = $slice->seq;
-                #my $seq_up = $slice->subseq(1,60);
-                #my $seq_down = $slice->subseq(62,121);
-                
+            {   
                 my $db = Bio::DB::Fasta->new('genome.fa');
                 #my $slice = $db->seq($$x{CHROM}, $$x{POS}-60 => $$x{POS}+60);
                 my $slice = $db->seq($$x{CHROM}, $$x{POS}-60 => $$x{POS}+60);
@@ -359,8 +353,15 @@ sub print_info
             my $gene_clndbn = get_annotations($x, "CLNDBN");
             my $aa_change = get_annotations($x, "SNPEFF_AMINO_ACID_CHANGE");
             my $phastcons = get_annotations($x, "PhastCons");
-            #TODO
+            # TO-DO
             my ($snpeff_type, $snpeff_gene, $snpeff_aa_change) = get_snpEffannotations($x);
+            # TO-DO ADD 
+            my $rmsk = bed_annotate($$x{CHROM},$$x{POS}-1,$$x{POS}, 0);
+            #my $rmsk = ".";
+            my $gwas = bed_annotate($$x{CHROM},$$x{POS}-1,$$x{POS}, 1);
+            my $cpg = bed_annotate($$x{CHROM},$$x{POS}-1,$$x{POS}, 2);
+            my $clinvar = bed_annotate($$x{CHROM},$$x{POS}-1,$$x{POS}, 3);
+            #my $gwascatalog = bed_annotate($$x{CHROM},$$x{POS}-1,$$x{POS}, 3);
 
             # check gene name from several sources
             if($fun_gene eq ".")
@@ -379,17 +380,23 @@ sub print_info
             #print "\t$gt_freq";
             print "\t$info_string";
             
-            print "\t$fun_type";
-            print ":$snpeff_type";
+            # BUG ISSUE #3 print "\t$fun_type:";
+            print "\t$snpeff_type";
             
             print "\t$fun_network";
             print "\t$fun_tfp";
             print "\t$fun_dnase";
             if($getseq eq "T") { print "\t$fasta_str"; }
-            print "\t$gene_clndbn";
+            print "\t$gene_clndbn:$clinvar";
             #print ",$snpeff_gene";
             print "\t$snpeff_aa_change";
             print "\t$phastcons";
+            print "\t$rmsk";
+            print "\t$cpg";
+            
+            print "\t$gwas";
+            #print "\t$gwas:$gwascatalog";
+            
             print "\t$prop_homr_str";
             print "\t$prop_het_str";
             print "\t$prop_homa_str";
@@ -532,7 +539,8 @@ sub print_info_html
     }
 }
 
-
+# PARSE FUNSEQ OUTPUT IN BED FORMAT
+# TO-DO CHANGE TO TABIX 
 sub parse_fun_bed
 {
     #print "size of the hash:  " . keys( %bedhash ) . ".\n";
@@ -626,7 +634,8 @@ sub parse_fun_bed
     }
 
     #$output = $gene."\t".$type."\t".$network."\t".$tfp."\t".$dnase;
-    return ($gene, $type, $network, $tfp, $dnase, $highlight);
+    # BUG: TYPE ISSUE
+    return ($gene, $type, $network, $tfp, $dnase, $highlight);    
     #return $output;
 }
 
@@ -678,6 +687,10 @@ sub get_snpEffannotations
     {
         $eff_type = ".";
     }
+    if($eff_aa_change eq "")
+    {
+        $eff_aa_change = ".";
+    }
     return ($eff_type, $eff_gene, $eff_aa_change);
 }
 
@@ -702,3 +715,38 @@ sub get_gt_type
     }
 }
 
+sub bed_annotate
+{
+    # my $annotation_tabix = shift;
+    my $chr = shift;
+    my $start = shift;
+    my $end = shift;
+    my $annotation_id = shift;
+    my @var = ();
+    # my @rmsk = ();
+    # my @gwas = ();
+    # my @cpg = ();
+    # my $tabix;
+    
+    @var =split('\t', $tabix[$annotation_id]->read($tabix[$annotation_id]->query( $chr, $start, $end)));
+    #@rmsk = split('\t', $tabix[0]->read($tabix[0]->query( $chr, $start, $end)));
+    #@gwas = split('\t', $tabix[0]->read($tabix[0]->query( $chr, $start, $end)));
+    #@cpg = split('\t', $tabix[0]->read($tabix[0]->query( $chr, $start, $end)));
+
+    #print "\n--->";
+    #print join(",", @var);
+    #print "\n";
+
+    if (0+@var > 0) {
+        if($var[3] ne ""){
+            return ($var[3]);
+        }
+        else{
+            return (".");
+        }
+    }
+    else
+    {
+        return (".");
+    }
+}
