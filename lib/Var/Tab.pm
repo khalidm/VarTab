@@ -341,18 +341,6 @@ sub get_variant_contingency_table {
                         # ORIGINAL print $OUTTAB "\n";
                     }
                 }
-                # for (my $i = 1; $i < ($gt_counts+1); $i++) {
-                #     for (my $j = 1; $j < ($gt_counts+1); $j++) {
-                #         print $OUTTAB "$arr[$i]_[$j] ";
-                #     }
-                #     print $OUTTAB "\n";
-                # }
-
-                #elsif ( $maf_output[0] == 2 && $hapmap == 0 ) {
-                #     # $print_string = print_info($x, $freq_threshold, $getseq, $vcf, $output);
-                #     $print_string = "-$$x{CHROM}:$$x{POS}:$$x{ID}\t$gt_string\n";
-                #     print_to_var_type_single($r, $a, $OUTTAB, $print_string);
-                # }
             } else {
                 my $gt_string = "";
                 # get the ALT
