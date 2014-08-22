@@ -337,10 +337,8 @@ sub get_variant_contingency_table {
                     if( length($r) == 1 && length($a) == 1 && $sum < $freq_threshold) {
                         push @arr, [@gt_array];
                         # print_to_var_type_single($r, $a, $OUTTAB, $print_string);
-                        print $OUTTAB join(",", @gt_array);
-                        # print $OUTTAB " ";
-                        # print $OUTTAB ;
-                        print $OUTTAB "\n";
+                        # ORIGINAL print $OUTTAB join(",", @gt_array);
+                        # ORIGINAL print $OUTTAB "\n";
                     }
                 }
                 # for (my $i = 1; $i < ($gt_counts+1); $i++) {
@@ -375,7 +373,7 @@ sub get_variant_contingency_table {
                     }
                 }
                 $print_string = "-$$x{CHROM}:$$x{POS}:$$x{ID}\t$gt_string\n";
-                print_to_var_type_single($r, $a, $OUTTAB, $print_string);
+                # print_to_var_type_single($r, $a, $OUTTAB, $print_string);
             }
             # }
             # last;
