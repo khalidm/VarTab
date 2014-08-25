@@ -191,8 +191,10 @@ sub get_variant_contingency_table {
     {
         my $r = $$x{REF};
         my $a = join("", @{$$x{ALT}});
+        my $gt_name = join(",", %{$$x{gtypes}});
         #print $r."\t".$a."\n";
-        $total++;
+        
+        # $total++;
 
         # print Dumper($x);
         if ( !$header_printed ) 
@@ -212,10 +214,11 @@ sub get_variant_contingency_table {
             print_to_file($OUTTAB, $header); 
             
             if($getseq eq "T") { print OUTTAB "\tFASTA"; }
-            my $index = 1;
+            my $index = 1; my $index2 = 0;
             for my $col (sort keys %{$$x{gtypes}})
             {
                 $gt_array[$index] = $col;
+                # $gt_name[$total] = $col;
                 print_to_file($OUTTAB, "\t".$col);
             }
             print_to_file($OUTTAB, "\n");
@@ -293,7 +296,7 @@ sub get_variant_contingency_table {
                 $gt_counts++;               
             }
             # reset array
-            @gt_array = (0) * ($gt_counts + 1);            
+            # @gt_array = (0) * ($gt_counts + 1);
 
             if( $$opts{maf1kg} ) {
                 # print_info($x, $freq_threshold, $getseq, $vcf, $output);
@@ -302,6 +305,16 @@ sub get_variant_contingency_table {
                 my $alt;
                 my $index = 1;  
                 $gt_array[0] = "**$$x{CHROM}:$$x{POS}:$$x{ID}";
+                
+                #######
+                # for my $col (sort keys %{$$x{gtypes}}){
+                #     # $gt_array[$index] = $col;
+                #     $gt_name = $col;
+                #     # print_to_file($OUTTAB, "\t".$col);
+                # }
+                $gt_array[0] = $gt_name;
+                #######                
+
                 for my $alt (@{$$x{ALT}}) {
                     if ( $alt eq '.' ) { $alt=$$x{REF}; }
                     for my $col (sort keys %{$$x{gtypes}}) {
@@ -365,17 +378,20 @@ sub get_variant_contingency_table {
             }
             # }
             # last;
-        }        
-
+        }
+        $total++;
     }
-    print $OUTTAB "\ngt_counts=".$gt_counts."\n";
-    print $OUTTAB "total=".$total."\n\n";
+    
+    # PRINT DEBUG CODE
+    # print $OUTTAB "\ngt_counts=".$gt_counts."\n";
+    # print $OUTTAB "total=".$total."\n\n";
     # for (my $i = 0; $i < ($gt_counts+1); $i++) {
     #     for (my $j = 0; $j < ($total+1); $j++) {
     #         print $OUTTAB "$arr[$i] ";
     #     }
     #     print $OUTTAB "\n";
     # }
+    # PRINT DEBUG CODE
 
     # TRANSPOSE
     my @rows = ();
