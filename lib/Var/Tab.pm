@@ -169,7 +169,7 @@ sub get_variant_contingency_table {
     # output array
     # my @frame_events = (((1) x 10), ((1) x 10));
     my @arr;    
-    # my @gt_array = (0);
+    my @gt_names = (0);
     my $gt_counts = 0;
         
     # OPEN OUTPUT FILE PREFIX.tab
@@ -185,7 +185,13 @@ sub get_variant_contingency_table {
     my $total = 0;
     my $print_string = "";
     my @maf_output = ();
-    my $header = "";    
+    my $header = ""; 
+
+    # my $i = 0;
+    # for my $col (sort keys %{$$x{gtypes}}) {
+    #     $gt_names[$i] = "[".$col."]";
+    #     $i++;        
+    # }   
 
     while (my $x=$vcf->next_data_hash())
     {
@@ -193,8 +199,6 @@ sub get_variant_contingency_table {
         my $a = join("", @{$$x{ALT}});
         my $gt_name = join(",", %{$$x{gtypes}});
         #print $r."\t".$a."\n";
-        
-        # $total++;
 
         # print Dumper($x);
         if ( !$header_printed ) 
@@ -207,21 +211,25 @@ sub get_variant_contingency_table {
             }    
             @gt_array = (0) * ($gt_counts + 1);
             # $header = "chr:pos\tREF\tALT\tGENE\tAA\tTYPE\tREGION\tCADD\tFUNSEQ\tPOLY_SIFT\tCONS\tTFBS\tDNASE\tCpG\tGWAS\tRMSK\tncRNA_p-gene\tCLINICAL\tMAF\tSampleFreq.HOM_REF\tSampleFreq.HET\tSampleFreq.HOM_ALT";
-            $header = "chr:pos:id";
+            # ORIGINAL vXS $header = "chr:pos:id";
+            $header = "sample";
             $gt_array[0] = $header;
             
             # ADD FUNCTION TO PRINT TO FILE
-            print_to_file($OUTTAB, $header); 
+            # print_to_file($OUTTAB, $header);
+            # print_to_file($OUTTAB, "\t");
             
             if($getseq eq "T") { print OUTTAB "\tFASTA"; }
-            my $index = 1; my $index2 = 0;
+            my $index = 1;
+            
             for my $col (sort keys %{$$x{gtypes}})
             {
                 $gt_array[$index] = $col;
+                $index++;
                 # $gt_name[$total] = $col;
-                print_to_file($OUTTAB, "\t".$col);
+                # print_to_file($OUTTAB, "\t".$col);
             }
-            print_to_file($OUTTAB, "\n");
+            # print_to_file($OUTTAB, "\n");
             
             $header_printed = 1;
             push @arr, [@gt_array];
@@ -286,7 +294,6 @@ sub get_variant_contingency_table {
                 }
             }
         } else {
-
             # if(@{$$x{ALT}} == 1 && length(@{$$x{ALT}}[0]) == 1) {
             # if(@{$$x{ALT}} == 1) {
             my @gt_array = (0);
@@ -303,8 +310,8 @@ sub get_variant_contingency_table {
                 my $gt_string = "";
                 # get the ALT
                 my $alt;
-                my $index = 1;  
-                $gt_array[0] = "**$$x{CHROM}:$$x{POS}:$$x{ID}";
+                my $index = 1;
+                $gt_array[0] = "$$x{CHROM}:$$x{POS}:$$x{ID}";
                 
                 #######
                 # for my $col (sort keys %{$$x{gtypes}}){
@@ -312,7 +319,7 @@ sub get_variant_contingency_table {
                 #     $gt_name = $col;
                 #     # print_to_file($OUTTAB, "\t".$col);
                 # }
-                $gt_array[0] = $gt_name;
+                # $gt_array[0] = "*";
                 #######                
 
                 for my $alt (@{$$x{ALT}}) {
@@ -381,18 +388,6 @@ sub get_variant_contingency_table {
         }
         $total++;
     }
-    
-    # PRINT DEBUG CODE
-    # print $OUTTAB "\ngt_counts=".$gt_counts."\n";
-    # print $OUTTAB "total=".$total."\n\n";
-    # for (my $i = 0; $i < ($gt_counts+1); $i++) {
-    #     for (my $j = 0; $j < ($total+1); $j++) {
-    #         print $OUTTAB "$arr[$i] ";
-    #     }
-    #     print $OUTTAB "\n";
-    # }
-    # PRINT DEBUG CODE
-
     # TRANSPOSE
     my @rows = ();
     my @transposed = ();
@@ -401,20 +396,25 @@ sub get_variant_contingency_table {
             push(@{$transposed[$column]}, $row->[$column]);
         }
     }
-    # PRINT    
-    for my $new_row (@transposed) {
+
+    # PRINT ORIGINAL MATRIX    
+    for my $new_row (@arr) {
         for my $new_col (@{$new_row}) {
-            print $OUTTAB $new_col, " ";
+            print $OUTTAB $new_col, "\t";
         }
         print $OUTTAB "\n";
     }
-    # for (my $i = 0; $i < @transposed; $i++) {
-    #     for (my $j = 0; $j < @transposed[$i]; $j++) {
-    #         print "$transposed[$i][$j] ";
-    #     }
-    #     print "\n";
-    #     last;
-    # }
+    print $OUTTAB "\nNEXT\n";
+
+
+    # PRINT TRANSPOSED MATRIX
+    for my $new_row (@transposed) {
+        for my $new_col (@{$new_row}) {
+            print $OUTTAB $new_col, "\t";
+        }
+        print $OUTTAB "\n";
+    }
+    print $OUTTAB "Total = ".$total."\n";
     
     close $OUTTAB;    
     $vcf->close();
